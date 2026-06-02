@@ -1,0 +1,193 @@
+openapi: "3.1.0"
+info:
+  title: bunshin-go Workflow API
+  description: |
+    REST API for executing bunshin-go workflows over HTTP/2.
+
+    Two execution modes:
+    - **Synchronous** (`POST /workflows/{id}`): blocks until the workflow
+      completes and returns the final output.
+    - **Streaming** (`GET /workflows/{id}/stream`): returns a Server-Sent
+      Events stream of step events and LLM tokens.
+  version: "0.1.0"
+  contact:
+    name: bunshin-go
+    url: https://github.com/stlimtat/bunshin-go
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+paths:
+  /workflows/{id}:
+    post:
+      operationId: executeWorkflow
+      summary: Execute a workflow synchronously
+      description: |
+        Runs the workflow identified by `id` with the given input and waits
+        for completion. Use the streaming endpoint for long-running workflows
+        or to receive LLM tokens as they arrive.
+      parameters:
+        - $ref: "#/components/parameters/WorkflowID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowRequest"
+            examples:
+              basic:
+                summary: Simple echo workflow
+                value:
+                  workflow_id: echo
+                  thread_id: thread-abc123
+                  input:
+                    message: "Hello, world!"
+      responses:
+        "200":
+          description: Workflow completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Workflow not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Workflow execution failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowResponse"
+
+  /workflows/{id}/stream:
+    get:
+      operationId: streamWorkflow
+      summary: Execute a workflow with Server-Sent Events streaming
+      description: |
+        Runs the workflow and streams execution events back to the client
+        as Server-Sent Events (SSE). Each event has a `type` field:
+
+        - `step_start` — a graph node began executing
+        - `llm_token` — one incremental LLM token
+        - `step_end` — a graph node completed
+        - `error` — the workflow failed; stream closes after this event
+        - `done` — the workflow completed; stream closes after this event
+      parameters:
+        - $ref: "#/components/parameters/WorkflowID"
+        - name: input
+          in: query
+          description: |
+            JSON-encoded workflow input object.
+            Example: `?input={"message":"hello"}`
+          required: false
+          schema:
+            type: string
+            contentMediaType: application/json
+      responses:
+        "200":
+          description: SSE stream of workflow events
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamEvent"
+              examples:
+                stream:
+                  summary: Typical streaming sequence
+                  value: |
+                    data: {"type":"step_start","step_id":"reason"}
+
+                    data: {"type":"llm_token","token":"Hello"}
+
+                    data: {"type":"llm_token","token":" world"}
+
+                    data: {"type":"step_end","step_id":"reason"}
+
+                    data: {"type":"done","output":{"result":"Hello world"}}
+
+        "404":
+          description: Workflow not found
+
+components:
+  parameters:
+    WorkflowID:
+      name: id
+      in: path
+      required: true
+      description: The workflow identifier registered with the server.
+      schema:
+        type: string
+        example: summarize
+
+  schemas:
+    WorkflowRequest:
+      type: object
+      required:
+        - input
+      properties:
+        workflow_id:
+          type: string
+          description: Identifies which workflow to run (also encoded in path).
+          example: summarize
+        thread_id:
+          type: string
+          description: |
+            Horizontal-scale coordination key. Pass the same ThreadID to any
+            node in the cluster to resume a checkpointed workflow.
+          example: thread-abc123
+        input:
+          type: object
+          description: Workflow-specific input payload.
+          additionalProperties: true
+          example:
+            text: "Go is a statically typed language."
+
+    WorkflowResponse:
+      type: object
+      properties:
+        thread_id:
+          type: string
+          example: thread-abc123
+        output:
+          type: object
+          description: Workflow output. Present on success.
+          additionalProperties: true
+        error:
+          type: string
+          description: Error message. Present on failure.
+
+    StreamEvent:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [step_start, llm_token, step_end, error, done]
+          description: Event type.
+        step_id:
+          type: string
+          description: Node ID (present on step_start / step_end).
+        token:
+          type: string
+          description: LLM token fragment (present on llm_token).
+        output:
+          description: Final workflow output (present on done).
+        error:
+          type: string
+          description: Error message (present on error).
+
+    ErrorResponse:
+      type: string
+      description: Plain-text error message.

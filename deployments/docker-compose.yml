@@ -1,0 +1,62 @@
+version: "3.9"
+
+# bunshin-go hello-world workflow stack.
+#
+# Services:
+#   workflow-server — bunshin-go HTTP transport serving the echo workflow.
+#   redis           — optional checkpoint / message store backend.
+#   mcp-mock        — lightweight HTTP stub acting as a remote MCP server.
+#
+# Usage:
+#   docker compose -f deployments/docker-compose.yml up
+#
+# The workflow-server is built from the project Dockerfile (see below).
+# It exposes POST /workflows/echo and GET /workflows/echo/stream on :8080.
+
+services:
+  workflow-server:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    image: bunshin-go:dev
+    ports:
+      - "8080:8080"
+    environment:
+      BUNSHIN_ADDR: ":8080"
+      BUNSHIN_LOG_LEVEL: "info"
+      REDIS_URL: "redis:6379"
+      # Inject provider credentials via environment — picked up by EnvProvider.
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/workflows/echo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Lightweight MCP server stub — replace with a real MCP server image in production.
+  mcp-mock:
+    image: kennethreitz/httpbin:latest
+    ports:
+      - "8811:80"
+    restart: unless-stopped
+
+volumes:
+  redis-data:
