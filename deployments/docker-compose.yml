@@ -1,9 +1,9 @@
 # bunshin-go hello-world workflow stack.
 #
 # Services:
-#   workflow-server — bunshin-go HTTP transport serving the echo workflow.
-#   redis           — optional checkpoint / message store backend.
-#   mcp-mock        — lightweight HTTP stub acting as a remote MCP server.
+#   bunshin  — bunshin-go HTTP transport serving the echo workflow.
+#   redis    — optional checkpoint / message store backend.
+#   mcp-mock — lightweight HTTP stub acting as a remote MCP server.
 #
 # Usage:
 #   docker compose -f deployments/docker-compose.yml up
@@ -12,7 +12,7 @@
 # It exposes POST /workflows/echo and GET /workflows/echo/stream on :8080.
 
 services:
-  workflow-server:
+  bunshin:
     build:
       context: ..
       dockerfile: deployments/Dockerfile
