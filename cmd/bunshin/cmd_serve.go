@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/stlimtat/bunshin-go/internal/telemetry"
 	"github.com/stlimtat/bunshin-go/pkg/core"
 	"github.com/stlimtat/bunshin-go/pkg/transport"
@@ -61,7 +63,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := srv.Serve(ctx, handler); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		if err := srv.Serve(ctx, handler); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
 		logger.Error().Err(err).Msg("server failed")
 		return err
 	}
