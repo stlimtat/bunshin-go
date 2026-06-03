@@ -121,7 +121,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if err := p.checkStatus(resp); err != nil {
 		return nil, err
@@ -132,12 +132,13 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		return nil, fmt.Errorf("anthropic: decode response: %w", err)
 	}
 
-	content := ""
+	var sb strings.Builder
 	for _, block := range wireResp.Content {
 		if block.Type == "text" {
-			content += block.Text
+			sb.WriteString(block.Text)
 		}
 	}
+	content := sb.String()
 
 	return &Response{
 		Content: content,
@@ -171,14 +172,14 @@ func (p *AnthropicProvider) StreamComplete(ctx context.Context, req *Request) (<
 		return nil, fmt.Errorf("anthropic: http: %w", err)
 	}
 	if err := p.checkStatus(resp); err != nil {
-		resp.Body.Close()
+		resp.Body.Close() //nolint:errcheck
 		return nil, err
 	}
 
 	ch := make(chan Chunk, 16)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		p.readSSEStream(resp.Body, ch)
 	}()
 	return ch, nil
@@ -197,7 +198,7 @@ func (p *AnthropicProvider) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("anthropic: ping: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	return p.checkStatus(resp)
 }
 
@@ -256,10 +257,10 @@ func (p *AnthropicProvider) buildWireRequest(req *Request, stream bool) (*anthro
 		Stream:    stream,
 	}
 
-	var systemText string
+	var sb strings.Builder
 	for _, m := range req.Messages {
 		if m.Role == RoleSystem {
-			systemText += m.Text()
+			sb.WriteString(m.Text())
 			continue
 		}
 		wireReq.Messages = append(wireReq.Messages, anthropicWireMessageItem{
@@ -267,8 +268,8 @@ func (p *AnthropicProvider) buildWireRequest(req *Request, stream bool) (*anthro
 			Content: m.Text(),
 		})
 	}
-	wireReq.System = systemText
-	return wireReq, systemText
+	wireReq.System = sb.String()
+	return wireReq, wireReq.System
 }
 
 // setHeaders attaches Anthropic-specific auth and versioning headers.

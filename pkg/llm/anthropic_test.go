@@ -68,7 +68,10 @@ func TestAnthropicProvider_Complete(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintln(w, `{"content":[{"type":"text","text":"hello from claude"}],"usage":{"input_tokens":10,"output_tokens":8},"model":"claude-haiku-4-5-20251001"}`)
+		_, err := fmt.Fprintln(w, `{"content":[{"type":"text","text":"hello from claude"}],"usage":{"input_tokens":10,"output_tokens":8},"model":"claude-haiku-4-5-20251001"}`)
+		if err != nil {
+			t.Errorf("Writing data failed: %e", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -151,10 +154,23 @@ func TestAnthropicProvider_StreamComplete(t *testing.T) {
 		w.Header().Set("Cache-Control", "no-cache")
 		flusher, _ := w.(http.Flusher)
 
-		fmt.Fprintln(w, `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`)
-		fmt.Fprintln(w, `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}`)
-		fmt.Fprintln(w, `data: {"type":"message_delta","usage":{"input_tokens":5,"output_tokens":3}}`)
-		fmt.Fprintln(w, `data: {"type":"message_stop"}`)
+		var err error
+		_, err = fmt.Fprintln(w, `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`)
+		if err != nil {
+			t.Errorf("Writing data failed: %e", err)
+		}
+		_, err = fmt.Fprintln(w, `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}`)
+		if err != nil {
+			t.Errorf("Writing data failed: %e", err)
+		}
+		_, err = fmt.Fprintln(w, `data: {"type":"message_delta","usage":{"input_tokens":5,"output_tokens":3}}`)
+		if err != nil {
+			t.Errorf("Writing data failed: %e", err)
+		}
+		_, err = fmt.Fprintln(w, `data: {"type":"message_stop"}`)
+		if err != nil {
+			t.Errorf("Writing data failed: %e", err)
+		}
 		if flusher != nil {
 			flusher.Flush()
 		}
@@ -198,7 +214,10 @@ func TestAnthropicProvider_Ping(t *testing.T) {
 			t.Errorf("unexpected path for ping: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintln(w, `{"content":[{"type":"text","text":"."}],"usage":{"input_tokens":1,"output_tokens":1},"model":"claude-haiku-4-5-20251001"}`)
+		_, err := fmt.Fprintln(w, `{"content":[{"type":"text","text":"."}],"usage":{"input_tokens":1,"output_tokens":1},"model":"claude-haiku-4-5-20251001"}`)
+		if err != nil {
+			t.Errorf("failed sending data: %e", err)
+		}
 	}))
 	defer srv.Close()
 
