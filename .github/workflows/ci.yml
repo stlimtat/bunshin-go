@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Test
+    name: Test (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -30,8 +30,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
+      - name: Unit tests
         run: go test -race -count=1 -timeout=120s ./...
+
+      - name: Integration tests
+        run: go test -race -count=1 -timeout=120s -tags=integration ./...
+        # Skips cleanly when no integration-tagged test files exist
 
   lint:
     name: Lint
@@ -52,8 +56,8 @@ jobs:
           version: latest
           args: --timeout=5m
 
-  build-examples:
-    name: Build examples
+  build-cmds:
+    name: Build cmd binaries
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -65,9 +69,58 @@ jobs:
           go-version: "1.23"
           cache: true
 
-      - name: Build all examples
+      - name: Build all cmd binaries
+        run: go build ./cmd/...
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployments/Dockerfile
+          push: false
+          tags: bunshin-go:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker-integration:
+    name: Docker integration test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: docker build -f deployments/Dockerfile -t bunshin-go:dev .
+
+      - name: Start stack
+        run: docker compose -f deployments/docker-compose.yml up -d --wait
+        timeout-minutes: 3
+
+      - name: Smoke test echo workflow
         run: |
-          go build ./examples/hello-llm/...
-          go build ./examples/hello-chain/...
-          go build ./examples/hello-agent/...
-          go build ./examples/hello-mcp-sandbox/...
+          curl -sf -X POST http://localhost:8080/workflows/echo \
+            -H "Content-Type: application/json" \
+            -d '{"input": {"message": "hello"}}' | grep -q '"result"'
+
+      - name: Smoke test SSE stream
+        run: |
+          curl -sf -N --max-time 5 \
+            "http://localhost:8080/workflows/echo/stream?input=%7B%22message%22%3A%22hello%22%7D" \
+            | grep -q '"type":"done"'
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f deployments/docker-compose.yml down -v

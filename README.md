@@ -36,18 +36,68 @@ fmt.Println(result.Content)
 
 ---
 
-## Examples
+## CLI
 
-| Example | What it shows |
-|---------|---------------|
-| [`hello-llm`](examples/hello-llm/) | Single provider call |
-| [`hello-chain`](examples/hello-chain/) | Two-step chain: fast → slow model |
-| [`hello-agent`](examples/hello-agent/) | Agent loop with tool use |
-| [`hello-mcp-sandbox`](examples/hello-mcp-sandbox/) | MCP tool discovery + sandboxed code execution |
+All demo programs and the server are unified under the `bunshin` CLI.
+
+### Build
 
 ```bash
-go run ./examples/hello-agent
-go run ./examples/hello-mcp-sandbox
+export PATH="$HOME/.local/share/mise/installs/go/1.26.4/bin:$PATH"
+go build -o bunshin ./cmd/bunshin
+```
+
+### Subcommands
+
+| Subcommand | What it does |
+|------------|--------------|
+| `bunshin llm` | Single provider LLM call |
+| `bunshin chain` | Two-step entity extraction chain |
+| `bunshin agent` | Agent loop with arithmetic tools |
+| `bunshin mcp-sandbox` | MCP tool discovery + sandboxed code execution |
+| `bunshin serve` | Start the HTTP workflow server |
+| `bunshin health` | Self-check (used by Docker healthcheck) |
+| `bunshin version` | Print version |
+| `bunshin docs` | Generate LLM-ready CLI markdown docs |
+
+### Examples
+
+```bash
+# Fake provider (no key needed)
+bunshin llm --message "What is Go?"
+
+# Two-step chain
+bunshin chain --input "Apple and Google are big tech companies"
+
+# Agent with arithmetic
+bunshin agent --question "3 + 4"
+bunshin agent --question "What is 6*7?"
+
+# MCP sandbox demo
+bunshin mcp-sandbox
+
+# Start server on :8080
+bunshin serve
+bunshin serve --addr :9090
+
+# Generate CLI docs to ./cli-docs/
+bunshin docs --output-dir ./cli-docs
+```
+
+### Environment Variables
+
+All flags can be set via environment variables with the `BUNSHIN_` prefix:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUNSHIN_PROVIDER` | `fake` | LLM provider: `fake\|openai\|anthropic\|google\|ollama` |
+| `BUNSHIN_MODEL` | _(provider default)_ | Model ID |
+| `BUNSHIN_API_KEY` | | API key for the chosen provider |
+| `BUNSHIN_LOG_LEVEL` | `info` | Log level: `debug\|info\|warn\|error` |
+| `BUNSHIN_ADDR` | `:8080` | HTTP listen address (serve subcommand) |
+
+```bash
+BUNSHIN_PROVIDER=openai BUNSHIN_API_KEY=sk-... bunshin llm --message "Hello"
 ```
 
 ---
@@ -62,19 +112,19 @@ bunshin-go/
 │   ├── memory/        # MessageStore with 2M-token sliding window
 │   ├── middleware/     # Chain, WithLogging, WithRetry, WithTimeout, …
 │   ├── prompt/        # Fragment → PromptTemplate → PromptBackend
-│   ├── telemetry/     # TelemetryBackend (LangSmith + OTEL)
 │   ├── checkpoint/    # Checkpointer + Journal for resume/replay recovery
 │   ├── eval/          # EvalRunner + built-in evaluators
 │   ├── chain/         # Sequential step composition
 │   ├── graph/         # DAG executor with conditional routing
-│   ├── transport/     # HTTPTransport (SSE), StreamTransport
+│   ├── transport/     # HTTPTransport (SSE), health/live/ready/pprof endpoints
 │   ├── tools/         # Tool interface + ToolRegistry
 │   ├── mcp/           # MCP client + server (Model Context Protocol)
 │   ├── sandbox/       # Pluggable code execution (E2B, Docker, WASM)
 │   └── testing/fault/ # FaultInjector for chaos testing
 ├── internal/
-│   └── credentials/   # Credential injection (context + Provider interface)
-├── examples/          # Runnable hello-world programs
+│   ├── credentials/   # Credential injection (context + Provider interface)
+│   └── telemetry/     # zerolog init, slog bridge, TelemetryBackend, OTELBackend
+├── cmd/bunshin/       # Unified CLI (cobra + viper)
 ├── api/               # OpenAPI 3.1 specification
 └── deployments/       # Dockerfile + docker-compose
 ```
@@ -99,11 +149,19 @@ Five interception levels, applied with `middleware.Chain`:
 
 ```go
 agent := middleware.Chain(graph,
-    middleware.WithLogging(logger),     // L2: structured logs
+    middleware.WithLogging(logger),     // L2: structured logs (zerolog)
     middleware.WithRetry(cfg),          // L2: exponential backoff
     middleware.WithPanicRecovery(),     // L2: convert panics → errors
     middleware.WithTimeout(30*time.Second),
 )
+```
+
+### Logging
+
+All structured logs use [zerolog](https://github.com/rs/zerolog). Initialize once at startup:
+
+```go
+logger := telemetry.NewLogger("info") // also bridges slog → zerolog for third-party libs
 ```
 
 ### Credential injection
@@ -115,20 +173,24 @@ ctx = credentials.WithCredential(ctx, "openai", credentials.APIKeyCredential(os.
 result, err := mcpClient.CallTool(ctx, "search", input)
 ```
 
-Or inject at client construction via a `credentials.Provider` backed by AWS Secrets Manager, Vault, or GCP Secret Manager.
-
 ---
 
 ## REST API
 
-The `HTTPTransport` exposes two endpoints. Full spec: [`api/openapi.yaml`](api/openapi.yaml).
+The `HTTPTransport` exposes:
 
 ```
 POST /workflows/{id}          — synchronous execution
 GET  /workflows/{id}/stream   — SSE streaming (LLM tokens + step events)
+GET  /health                  — healthcheck (Docker/LB probe)
+GET  /live                    — liveness probe (Kubernetes)
+GET  /ready                   — readiness probe (Kubernetes)
+GET  /debug/pprof/*           — Go pprof profiling
 ```
 
 **SSE event types:** `step_start`, `llm_token`, `step_end`, `error`, `done`.
+
+Full spec: [`api/openapi.yaml`](api/openapi.yaml).
 
 ---
 
@@ -150,7 +212,7 @@ go test ./pkg/eval/... -v
 ## Docker
 
 ```bash
-# Start workflow server + Redis
+# Start workflow server
 docker compose -f deployments/docker-compose.yml up
 
 # Call the echo workflow
@@ -159,8 +221,13 @@ curl -X POST http://localhost:8080/workflows/echo \
   -d '{"input": {"message": "hello"}}'
 
 # Stream output
-curl -N http://localhost:8080/workflows/echo/stream?input=%7B%22message%22%3A%22hello%22%7D
+curl -N "http://localhost:8080/workflows/echo/stream?input=%7B%22message%22%3A%22hello%22%7D"
+
+# Health check
+curl http://localhost:8080/health
 ```
+
+The Docker image uses `bunshin health` as the container healthcheck — no extra tooling required in the distroless image.
 
 ---
 
@@ -171,8 +238,8 @@ Follows [golang-standards/project-layout](https://github.com/golang-standards/pr
 | Directory | Purpose |
 |-----------|---------|
 | `pkg/` | Public library packages |
-| `internal/` | Private shared utilities (credentials, backoff) |
-| `examples/` | Runnable demo programs |
+| `internal/` | Private shared utilities (credentials, telemetry/logging) |
+| `cmd/bunshin/` | Unified CLI (cobra + viper) |
 | `api/` | OpenAPI 3.1 specification |
 | `deployments/` | Dockerfile, docker-compose |
 | `.github/workflows/` | CI pipeline |
@@ -184,8 +251,7 @@ Follows [golang-standards/project-layout](https://github.com/golang-standards/pr
 - [ ] OpenAI + Anthropic provider adapters
 - [ ] Redis and S3 MessageStore backends
 - [ ] gRPC transport
-- [ ] LangSmith telemetry backend
-- [ ] `cmd/bunshin` CLI (serve, eval run, checkpoint list)
+- [ ] LangSmith telemetry backend (OTEL backend ships via `internal/telemetry.NewOTELBackend`)
 - [ ] E2B and Docker sandbox backends
 - [ ] Real MCP client (stdio + HTTP/SSE transport)
 

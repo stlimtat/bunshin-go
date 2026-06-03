@@ -1,5 +1,3 @@
-version: "3.9"
-
 # bunshin-go hello-world workflow stack.
 #
 # Services:
@@ -33,10 +31,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/workflows/echo"]
+      test: ["CMD", "/bunshin-server", "health"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5s
 
   redis:
     image: redis:7-alpine
