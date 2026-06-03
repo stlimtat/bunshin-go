@@ -3,10 +3,10 @@ package middleware_test
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/stlimtat/bunshin-go/pkg/core"
 	"github.com/stlimtat/bunshin-go/pkg/middleware"
 )
@@ -66,7 +66,7 @@ func TestChain_NoMiddleware(t *testing.T) {
 // ---- WithLogging ----
 
 func TestWithLogging_NoError(t *testing.T) {
-	logger := slog.Default() // just ensure it doesn't panic
+	logger := zerolog.Nop() // just ensure it doesn't panic
 	r := middleware.Chain(echo(), middleware.WithLogging(logger))
 	_, err := r.Invoke(context.Background(), "hi")
 	if err != nil {
@@ -75,7 +75,7 @@ func TestWithLogging_NoError(t *testing.T) {
 }
 
 func TestWithLogging_Error(t *testing.T) {
-	logger := slog.Default()
+	logger := zerolog.Nop()
 	sentinel := errors.New("boom")
 	r := middleware.Chain(alwaysFail(sentinel), middleware.WithLogging(logger))
 	_, err := r.Invoke(context.Background(), nil)
@@ -218,5 +218,98 @@ func TestWithTimeout_FastRunnableOK(t *testing.T) {
 	out, err := r.Invoke(context.Background(), "fast")
 	if err != nil || out != "fast" {
 		t.Fatalf("want fast nil, got %v %v", out, err)
+	}
+}
+
+// ---- Stream delegation ----
+
+func collectChunks(t *testing.T, r core.Runnable, input any) []core.StreamChunk {
+	t.Helper()
+	ch, err := r.Stream(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	var chunks []core.StreamChunk
+	for c := range ch {
+		chunks = append(chunks, c)
+	}
+	return chunks
+}
+
+func TestWithLogging_Stream_Delegates(t *testing.T) {
+	r := middleware.Chain(echo(), middleware.WithLogging(zerolog.Nop()))
+	chunks := collectChunks(t, r, "streamed")
+	if len(chunks) != 1 || chunks[0].Value != "streamed" {
+		t.Fatalf("want [streamed], got %v", chunks)
+	}
+}
+
+func TestWithPanicRecovery_Stream_NoPanic(t *testing.T) {
+	r := middleware.Chain(echo(), middleware.WithPanicRecovery())
+	chunks := collectChunks(t, r, "safe-stream")
+	if len(chunks) != 1 || chunks[0].Value != "safe-stream" {
+		t.Fatalf("want [safe-stream], got %v", chunks)
+	}
+}
+
+func TestWithRetry_Stream_Delegates(t *testing.T) {
+	r := middleware.Chain(echo(), middleware.WithRetry(middleware.RetryConfig{MaxAttempts: 3}))
+	chunks := collectChunks(t, r, "retry-stream")
+	if len(chunks) != 1 || chunks[0].Value != "retry-stream" {
+		t.Fatalf("want [retry-stream], got %v", chunks)
+	}
+}
+
+func TestWithTimeout_Stream_FastOK(t *testing.T) {
+	r := middleware.Chain(echo(), middleware.WithTimeout(time.Second))
+	chunks := collectChunks(t, r, "timeout-stream")
+	if len(chunks) != 1 || chunks[0].Value != "timeout-stream" {
+		t.Fatalf("want [timeout-stream], got %v", chunks)
+	}
+}
+
+func TestWithTimeout_Stream_Expires(t *testing.T) {
+	// The slow stream ignores its context so it never sends anything.
+	// WithTimeout must inject a DeadlineExceeded chunk when the deadline fires.
+	slow := core.NewRunnableFuncWithStream(
+		"slow-stream",
+		func(_ context.Context, input any) (any, error) { return input, nil },
+		func(_ context.Context, _ any) (<-chan core.StreamChunk, error) {
+			ch := make(chan core.StreamChunk)
+			// Never sends; goroutine leaks for test duration (< 1s).
+			go func() { time.Sleep(time.Second); close(ch) }()
+			return ch, nil
+		},
+	)
+	r := middleware.Chain(slow, middleware.WithTimeout(10*time.Millisecond))
+	ch, err := r.Stream(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var gotErr error
+	for c := range ch {
+		if c.Err != nil {
+			gotErr = c.Err
+		}
+	}
+	if !errors.Is(gotErr, context.DeadlineExceeded) {
+		t.Fatalf("want DeadlineExceeded in chunk, got %v", gotErr)
+	}
+}
+
+func TestWithMetadata_Stream_InjectsContext(t *testing.T) {
+	type key struct{}
+	var captured any
+	r := middleware.Chain(
+		core.NewRunnableFunc("ctx-check", func(ctx context.Context, input any) (any, error) {
+			captured = ctx.Value(key{})
+			return input, nil
+		}),
+		middleware.WithMetadata(key{}, "injected"),
+	)
+	chunks := collectChunks(t, r, nil)
+	_ = chunks
+	if captured != "injected" {
+		t.Fatalf("want injected, got %v", captured)
 	}
 }
