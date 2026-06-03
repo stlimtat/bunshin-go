@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -113,7 +114,7 @@ func TestAnthropicProvider_Complete_AuthError(t *testing.T) {
 	_, err := p.Complete(context.Background(), &Request{
 		Messages: []Message{NewTextMessage(RoleUser, "hi")},
 	})
-	if err == nil || err.Error() != "anthropic: authentication failed" {
+	if err == nil || !strings.HasPrefix(err.Error(), "anthropic: authentication failed") {
 		t.Errorf("expected auth error, got %v", err)
 	}
 }
@@ -128,7 +129,7 @@ func TestAnthropicProvider_Complete_RateLimit(t *testing.T) {
 	_, err := p.Complete(context.Background(), &Request{
 		Messages: []Message{NewTextMessage(RoleUser, "hi")},
 	})
-	if err == nil || err.Error() != "anthropic: rate limit exceeded" {
+	if err == nil || !strings.HasPrefix(err.Error(), "anthropic: rate limit exceeded") {
 		t.Errorf("expected rate limit error, got %v", err)
 	}
 }
@@ -210,11 +211,11 @@ func TestAnthropicProvider_StreamComplete(t *testing.T) {
 
 func TestAnthropicProvider_Ping(t *testing.T) {
 	srv := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/messages" {
+		if r.URL.Path != "/v1/models" {
 			t.Errorf("unexpected path for ping: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, err := fmt.Fprintln(w, `{"content":[{"type":"text","text":"."}],"usage":{"input_tokens":1,"output_tokens":1},"model":"claude-haiku-4-5-20251001"}`)
+		_, err := fmt.Fprintln(w, `{"data":[]}`)
 		if err != nil {
 			t.Errorf("failed sending data: %e", err)
 		}

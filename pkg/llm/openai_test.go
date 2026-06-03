@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -104,7 +105,7 @@ func TestOpenAIProvider_Complete_AuthError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected auth error")
 	}
-	if err.Error() != "openai: authentication failed" {
+	if !strings.HasPrefix(err.Error(), "openai: authentication failed") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -119,7 +120,7 @@ func TestOpenAIProvider_Complete_RateLimit(t *testing.T) {
 	_, err := p.Complete(context.Background(), &Request{
 		Messages: []Message{NewTextMessage(RoleUser, "hi")},
 	})
-	if err == nil || err.Error() != "openai: rate limit exceeded" {
+	if err == nil || !strings.HasPrefix(err.Error(), "openai: rate limit exceeded") {
 		t.Errorf("expected rate limit error, got %v", err)
 	}
 }

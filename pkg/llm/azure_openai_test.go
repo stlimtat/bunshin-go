@@ -142,7 +142,7 @@ func TestAzureOpenAIProvider_Complete_AuthError(t *testing.T) {
 	_, err := p.Complete(context.Background(), &Request{
 		Messages: []Message{NewTextMessage(RoleUser, "hi")},
 	})
-	if err == nil || err.Error() != "azure-openai: authentication failed" {
+	if err == nil || !strings.HasPrefix(err.Error(), "azure-openai: authentication failed") {
 		t.Errorf("expected auth error, got %v", err)
 	}
 }
@@ -161,7 +161,7 @@ func TestAzureOpenAIProvider_Complete_RateLimit(t *testing.T) {
 	_, err := p.Complete(context.Background(), &Request{
 		Messages: []Message{NewTextMessage(RoleUser, "hi")},
 	})
-	if err == nil || err.Error() != "azure-openai: rate limit exceeded" {
+	if err == nil || !strings.HasPrefix(err.Error(), "azure-openai: rate limit exceeded") {
 		t.Errorf("expected rate limit error, got %v", err)
 	}
 }

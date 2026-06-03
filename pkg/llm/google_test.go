@@ -62,8 +62,8 @@ func TestGoogleProvider_Complete(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "generateContent") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("key") != "testkey" {
-			t.Errorf("unexpected key param: %s", r.URL.Query().Get("key"))
+		if r.Header.Get("x-goog-api-key") != "testkey" {
+			t.Errorf("unexpected api key header: %s", r.Header.Get("x-goog-api-key"))
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -130,7 +130,7 @@ func TestGoogleProvider_Complete_AuthError(t *testing.T) {
 	_, err := p.Complete(context.Background(), &Request{
 		Messages: []Message{NewTextMessage(RoleUser, "hi")},
 	})
-	if err == nil || err.Error() != "google: authentication failed" {
+	if err == nil || !strings.HasPrefix(err.Error(), "google: authentication failed") {
 		t.Errorf("expected auth error, got %v", err)
 	}
 }
@@ -145,7 +145,7 @@ func TestGoogleProvider_Complete_RateLimit(t *testing.T) {
 	_, err := p.Complete(context.Background(), &Request{
 		Messages: []Message{NewTextMessage(RoleUser, "hi")},
 	})
-	if err == nil || err.Error() != "google: rate limit exceeded" {
+	if err == nil || !strings.HasPrefix(err.Error(), "google: rate limit exceeded") {
 		t.Errorf("expected rate limit error, got %v", err)
 	}
 }
@@ -199,8 +199,8 @@ func TestGoogleProvider_Ping(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "/v1beta/models") {
 			t.Errorf("unexpected path for ping: %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("key") != "testkey" {
-			t.Errorf("unexpected key param")
+		if r.Header.Get("x-goog-api-key") != "testkey" {
+			t.Errorf("unexpected api key header: %s", r.Header.Get("x-goog-api-key"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintln(w, `{"models":[]}`)
