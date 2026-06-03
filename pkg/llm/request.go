@@ -1,58 +1,21 @@
 package llm
 
-// ProviderID identifies an LLM provider.
-type ProviderID string
-
-const (
-	ProviderFake        ProviderID = "fake"
-	ProviderOpenAI      ProviderID = "openai"
-	ProviderAzureOpenAI ProviderID = "azure-openai"
-	ProviderAnthropic   ProviderID = "anthropic"
-	ProviderGoogle      ProviderID = "google"
-	ProviderOllama      ProviderID = "ollama"
-)
-
-// ModelTier classifies a model by capability vs cost trade-off.
-// Workflows can route different steps to different tiers without
-// hardcoding model names.
-type ModelTier string
-
-const (
-	TierFast      ModelTier = "fast"      // e.g. gpt-4o-mini, claude-haiku
-	TierSmart     ModelTier = "smart"     // e.g. gpt-4o, claude-sonnet
-	TierReasoning ModelTier = "reasoning" // e.g. o3, claude extended-thinking
-)
-
-// ModelID is the provider-specific model identifier.
-type ModelID string
-
-// ModelConfig fully specifies which model a workflow step should use.
-type ModelConfig struct {
-	Provider ProviderID
-	Model    ModelID
-	Tier     ModelTier
-	// Endpoint overrides the default provider URL (Azure custom endpoints, Ollama local).
-	Endpoint string
-	// Region hints for cloud routing (AWS region, Azure region).
-	Region string
-}
-
 // Role identifies the author of a message in a conversation.
 type Role string
 
 const (
-	RoleSystem    Role = "system"
-	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
+	RoleSystem    Role = "system"
 	RoleTool      Role = "tool"
+	RoleUser      Role = "user"
 )
 
 // ContentPartType identifies the kind of content in a ContentPart.
 type ContentPartType string
 
 const (
-	PartTypeText       ContentPartType = "text"
 	PartTypeImageURL   ContentPartType = "image_url"
+	PartTypeText       ContentPartType = "text"
 	PartTypeToolCall   ContentPartType = "tool_call"
 	PartTypeToolResult ContentPartType = "tool_result"
 )
