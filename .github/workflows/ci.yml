@@ -2,9 +2,24 @@ name: Continuous Integration
 
 on:
   push:
-    branches: ["master"]
+    branches:
+      - master
+    paths:
+      - cmd/**
+      - go.mod
+      - go.sum
+      - internal/**
+      - pkg/**
   pull_request:
-    branches: ["master"]
+    branches:
+      - master
+    paths:
+      - cmd/**
+      - go.mod
+      - go.sum
+      - internal/**
+      - pkg/**
+  workflow_dispatch:
 
 permissions:
   contents: read
