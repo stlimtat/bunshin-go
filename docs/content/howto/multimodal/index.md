@@ -7,7 +7,11 @@ weight = 2
 
 # Sending Binary Files to LLMs
 
-bunshin-go supports multi-modal content through `ContentPart`. Any binary file — image, audio clip, video, PDF — is wrapped in a `ContentPart` with `Data []byte` and `MimeType string`. Provider adapters base64-encode the bytes at the wire layer; your code works with raw `[]byte` throughout.
+bunshin-go models multi-modal content through `ContentPart`. Each part carries a `Type` discriminant, and binary content uses an `io.Reader` + `DataSize int64` pair so large files are streamed rather than copied into memory.
+
+> **Implementation status**
+>
+> Image via URL (`PartTypeImageURL`) and image inline data (`PartTypeImageData`) are the only part types currently wired through the provider adapters. Audio, video, and document types (`PartTypeAudioData`, `PartTypeVideoData`, `PartTypeDocumentData`) are defined in the API and validated, but no adapter converts them to wire format yet. Use the constructor functions described below — they will work transparently once adapter support lands.
 
 ---
 
@@ -16,10 +20,23 @@ bunshin-go supports multi-modal content through `ContentPart`. Any binary file �
 | Content type | OpenAI | Anthropic | Google Gemini | Azure OpenAI |
 |-------------|--------|-----------|---------------|--------------|
 | Image (URL) | ✓ | ✓ | ✓ | ✓ |
-| Image (inline bytes) | ✓ jpg/png/gif/webp | ✓ jpg/png/gif/webp | ✓ jpg/png/gif/webp | ✓ |
-| Audio | ✓ wav/mp3 | ✗ | ✓ wav/mp3/ogg/flac/aac | ✗ |
-| Video | ✗ | ✗ | ✓ mp4/mpeg/mov/avi/webm | ✗ |
-| Document (PDF) | ✗ | ✓ pdf | ✓ pdf/plain | ✗ |
+| Image (inline) | ✓ jpg/png/gif/webp | ✓ jpg/png/gif/webp | ✓ jpg/png/gif/webp | ✓ |
+| Audio | planned | — | planned | — |
+| Video | — | — | planned | — |
+| Document (PDF) | — | planned | planned | — |
+
+---
+
+## Constructor functions
+
+Prefer the constructor functions over struct literals — they set all required fields correctly and are forward-compatible with API changes.
+
+| Function | Use for |
+|---------|---------|
+| `llm.NewTextPart(text)` | Plain text |
+| `llm.NewImageURLPart(url)` | Remote image by URL |
+| `llm.NewBinaryPartFromBytes(partType, data, mimeType)` | Small in-memory buffers |
+| `llm.NewBinaryPart(partType, reader, size, mimeType)` | Large files via `io.Reader` |
 
 ---
 
@@ -31,14 +48,14 @@ bunshin-go supports multi-modal content through `ContentPart`. Any binary file �
 msg := llm.Message{
     Role: llm.RoleUser,
     Parts: []llm.ContentPart{
-        {Type: llm.PartTypeText, Text: "What is in this image?"},
-        {Type: llm.PartTypeImageURL, ImageURL: "https://example.com/photo.jpg"},
+        llm.NewTextPart("What is in this image?"),
+        llm.NewImageURLPart("https://example.com/photo.jpg"),
     },
 }
 resp, err := provider.Complete(ctx, &llm.Request{Messages: []llm.Message{msg}})
 ```
 
-### Image from disk (inline bytes)
+### Image from disk (small file, inline bytes)
 
 ```go
 data, err := os.ReadFile("photo.jpg")
@@ -49,15 +66,31 @@ if err != nil {
 msg := llm.Message{
     Role: llm.RoleUser,
     Parts: []llm.ContentPart{
-        {Type: llm.PartTypeText, Text: "Describe this image in detail."},
-        {
-            Type:     llm.PartTypeImageData,
-            Data:     data,
-            MimeType: "image/jpeg",
-        },
+        llm.NewTextPart("Describe this image in detail."),
+        llm.NewBinaryPartFromBytes(llm.PartTypeImageData, data, "image/jpeg"),
     },
 }
 resp, err := provider.Complete(ctx, &llm.Request{Messages: []llm.Message{msg}})
+```
+
+### Image from disk (large file, streamed)
+
+```go
+f, err := os.Open("photo.jpg")
+if err != nil {
+    return err
+}
+defer f.Close()
+
+info, _ := f.Stat()
+
+msg := llm.Message{
+    Role: llm.RoleUser,
+    Parts: []llm.ContentPart{
+        llm.NewTextPart("Describe this image in detail."),
+        llm.NewBinaryPart(llm.PartTypeImageData, f, info.Size(), "image/jpeg"),
+    },
+}
 ```
 
 ### Multiple images in one message
@@ -69,9 +102,9 @@ img2, _ := os.ReadFile("after.png")
 msg := llm.Message{
     Role: llm.RoleUser,
     Parts: []llm.ContentPart{
-        {Type: llm.PartTypeText, Text: "Compare these two screenshots and list the differences."},
-        {Type: llm.PartTypeImageData, Data: img1, MimeType: "image/png"},
-        {Type: llm.PartTypeImageData, Data: img2, MimeType: "image/png"},
+        llm.NewTextPart("Compare these two screenshots and list the differences."),
+        llm.NewBinaryPartFromBytes(llm.PartTypeImageData, img1, "image/png"),
+        llm.NewBinaryPartFromBytes(llm.PartTypeImageData, img2, "image/png"),
     },
 }
 ```
@@ -80,7 +113,7 @@ msg := llm.Message{
 
 ## Audio
 
-Audio analysis is supported by OpenAI and Google Gemini.
+> **Planned support** — `PartTypeAudioData` is defined but no provider adapter sends it to the wire yet. The code below shows the intended API.
 
 ```go
 audio, err := os.ReadFile("meeting.wav")
@@ -88,76 +121,63 @@ if err != nil {
     return err
 }
 
-// Google Gemini supports audio transcription and analysis
-googleProvider := llm.NewGoogleProvider(llm.GoogleConfig{
-    APIKey: key,
-    Model:  "gemini-2.0-flash",
-})
-
 resp, err := googleProvider.Complete(ctx, &llm.Request{
     Messages: []llm.Message{{
         Role: llm.RoleUser,
         Parts: []llm.ContentPart{
-            {Type: llm.PartTypeText, Text: "Transcribe this audio and summarise the key discussion points."},
-            {
-                Type:     llm.PartTypeAudio,
-                Data:     audio,
-                MimeType: "audio/wav",
-            },
+            llm.NewTextPart("Transcribe this audio and summarise the key discussion points."),
+            llm.NewBinaryPartFromBytes(llm.PartTypeAudioData, audio, "audio/wav"),
         },
     }},
 })
-fmt.Println(resp.Content)
 ```
 
-Supported MIME types:
+Supported MIME types (once wired):
 - `audio/wav` — WAV
 - `audio/mpeg` — MP3
-- `audio/ogg` — OGG (Gemini only)
-- `audio/flac` — FLAC (Gemini only)
-- `audio/aac` — AAC (Gemini only)
+- `audio/ogg` — OGG (Gemini)
+- `audio/flac` — FLAC (Gemini)
+- `audio/aac` — AAC (Gemini)
 
 ---
 
 ## Video
 
-Video analysis is supported by Google Gemini.
+> **Planned support** — `PartTypeVideoData` is defined but no provider adapter sends it to the wire yet.
 
 ```go
-video, err := os.ReadFile("demo.mp4")
+f, err := os.Open("demo.mp4")
 if err != nil {
     return err
 }
+defer f.Close()
+info, _ := f.Stat()
 
 resp, err := googleProvider.Complete(ctx, &llm.Request{
     Messages: []llm.Message{{
         Role: llm.RoleUser,
         Parts: []llm.ContentPart{
-            {Type: llm.PartTypeText, Text: "Describe what happens in this video. What actions are performed?"},
-            {
-                Type:     llm.PartTypeVideo,
-                Data:     video,
-                MimeType: "video/mp4",
-            },
+            llm.NewTextPart("Describe what happens in this video."),
+            llm.NewBinaryPart(llm.PartTypeVideoData, f, info.Size(), "video/mp4"),
         },
     }},
 })
 ```
 
-Supported MIME types:
+Supported MIME types (once wired):
 - `video/mp4`
 - `video/mpeg`
 - `video/quicktime` — MOV
 - `video/x-msvideo` — AVI
 - `video/webm`
 
-**Note**: Large video files should be uploaded via the Gemini Files API rather than inline bytes. For files over 20 MB, use the provider's file upload API and reference the file URI in a `PartTypeImageURL` part.
+For files over 20 MB, prefer the provider's file upload API and reference the URI via `NewImageURLPart`.
 
 ---
 
 ## Documents (PDF)
 
-PDFs are supported by Anthropic and Google Gemini.
+> **Planned support** — `PartTypeDocumentData` is defined but no provider adapter sends it to the wire yet.
 
 ```go
 pdf, err := os.ReadFile("contract.pdf")
@@ -165,22 +185,12 @@ if err != nil {
     return err
 }
 
-// Anthropic Claude handles PDFs well
-anthropicProvider := llm.NewAnthropicProvider(llm.AnthropicConfig{
-    APIKey: key,
-    Model:  "claude-3-5-sonnet-20241022",
-})
-
 resp, err := anthropicProvider.Complete(ctx, &llm.Request{
     Messages: []llm.Message{{
         Role: llm.RoleUser,
         Parts: []llm.ContentPart{
-            {
-                Type:     llm.PartTypeDocument,
-                Data:     pdf,
-                MimeType: "application/pdf",
-            },
-            {Type: llm.PartTypeText, Text: "Extract all payment terms and deadlines from this contract."},
+            llm.NewBinaryPartFromBytes(llm.PartTypeDocumentData, pdf, "application/pdf"),
+            llm.NewTextPart("Extract all payment terms and deadlines from this contract."),
         },
     }},
 })
@@ -190,7 +200,7 @@ resp, err := anthropicProvider.Complete(ctx, &llm.Request{
 
 ## Multi-modal in a Runnable
 
-Wrap multi-modal analysis in a `Runnable` so it composes into chains and graphs:
+Wrap multi-modal analysis in a `Runnable` to compose into chains and graphs:
 
 ```go
 type ImageAnalysisInput struct {
@@ -206,7 +216,6 @@ analyseImage := core.NewRunnableFunc("analyse-image", func(ctx context.Context, 
         return nil, fmt.Errorf("read image: %w", err)
     }
 
-    // Detect MIME type from extension
     mimeType := "image/jpeg"
     switch strings.ToLower(filepath.Ext(req.ImagePath)) {
     case ".png":
@@ -221,8 +230,8 @@ analyseImage := core.NewRunnableFunc("analyse-image", func(ctx context.Context, 
         Messages: []llm.Message{{
             Role: llm.RoleUser,
             Parts: []llm.ContentPart{
-                {Type: llm.PartTypeText, Text: req.Question},
-                {Type: llm.PartTypeImageData, Data: data, MimeType: mimeType},
+                llm.NewTextPart(req.Question),
+                llm.NewBinaryPartFromBytes(llm.PartTypeImageData, data, mimeType),
             },
         }},
     })
@@ -232,7 +241,7 @@ analyseImage := core.NewRunnableFunc("analyse-image", func(ctx context.Context, 
     return resp.Content, nil
 })
 
-// Use in a chain: extract text from image, then reason over the text
+// Extract text from image, then reason over the text
 pipeline := chain.New("ocr-then-reason",
     chain.Step{ID: "ocr", Runnable: analyseImage},
     chain.Step{ID: "reason", Runnable: reasonRunnable},
@@ -246,61 +255,66 @@ result, err := pipeline.Invoke(ctx, ImageAnalysisInput{
 
 ---
 
-## Helper: read file as ContentPart
+## Helper: detect content type from file extension
 
 ```go
-// FileContentPart reads a file from disk and returns a ContentPart with the correct type.
-func FileContentPart(path string) (llm.ContentPart, error) {
-    data, err := os.ReadFile(path)
+// FileContentPart opens a file and returns a ContentPart with the correct type.
+// The caller is responsible for closing the file after the request completes.
+func FileContentPart(path string) (llm.ContentPart, *os.File, error) {
+    f, err := os.Open(path)
     if err != nil {
-        return llm.ContentPart{}, err
+        return llm.ContentPart{}, nil, err
+    }
+    info, err := f.Stat()
+    if err != nil {
+        f.Close()
+        return llm.ContentPart{}, nil, err
     }
 
-    ext := strings.ToLower(filepath.Ext(path))
-    mimeTypes := map[string]struct {
+    type typeInfo struct {
         mime     string
         partType llm.ContentPartType
-    }{
+    }
+    ext := strings.ToLower(filepath.Ext(path))
+    types := map[string]typeInfo{
         ".jpg":  {"image/jpeg", llm.PartTypeImageData},
         ".jpeg": {"image/jpeg", llm.PartTypeImageData},
         ".png":  {"image/png", llm.PartTypeImageData},
         ".gif":  {"image/gif", llm.PartTypeImageData},
         ".webp": {"image/webp", llm.PartTypeImageData},
-        ".wav":  {"audio/wav", llm.PartTypeAudio},
-        ".mp3":  {"audio/mpeg", llm.PartTypeAudio},
-        ".ogg":  {"audio/ogg", llm.PartTypeAudio},
-        ".flac": {"audio/flac", llm.PartTypeAudio},
-        ".mp4":  {"video/mp4", llm.PartTypeVideo},
-        ".mov":  {"video/quicktime", llm.PartTypeVideo},
-        ".webm": {"video/webm", llm.PartTypeVideo},
-        ".pdf":  {"application/pdf", llm.PartTypeDocument},
+        ".wav":  {"audio/wav", llm.PartTypeAudioData},
+        ".mp3":  {"audio/mpeg", llm.PartTypeAudioData},
+        ".ogg":  {"audio/ogg", llm.PartTypeAudioData},
+        ".flac": {"audio/flac", llm.PartTypeAudioData},
+        ".mp4":  {"video/mp4", llm.PartTypeVideoData},
+        ".mov":  {"video/quicktime", llm.PartTypeVideoData},
+        ".webm": {"video/webm", llm.PartTypeVideoData},
+        ".pdf":  {"application/pdf", llm.PartTypeDocumentData},
     }
 
-    info, ok := mimeTypes[ext]
+    t, ok := types[ext]
     if !ok {
-        return llm.ContentPart{}, fmt.Errorf("unsupported file type: %s", ext)
+        f.Close()
+        return llm.ContentPart{}, nil, fmt.Errorf("unsupported file type: %s", ext)
     }
 
-    return llm.ContentPart{
-        Type:     info.partType,
-        Data:     data,
-        MimeType: info.mime,
-    }, nil
+    return llm.NewBinaryPart(t.partType, f, info.Size(), t.mime), f, nil
 }
 ```
 
 Usage:
 
 ```go
-part, err := FileContentPart("chart.png")
+part, f, err := FileContentPart("chart.png")
 if err != nil {
     return err
 }
+defer f.Close()
 
 msg := llm.Message{
     Role: llm.RoleUser,
     Parts: []llm.ContentPart{
-        {Type: llm.PartTypeText, Text: "Explain this chart."},
+        llm.NewTextPart("Explain this chart."),
         part,
     },
 }
