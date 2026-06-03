@@ -204,45 +204,6 @@ func (p *GoogleProvider) Ping(ctx context.Context) error {
 	return p.checkStatus(resp)
 }
 
-// googleWirePart is a content part in the Gemini wire format.
-type googleWirePart struct {
-	Text string `json:"text"`
-}
-
-// googleWireContent is a content block (role + parts) in the Gemini wire format.
-type googleWireContent struct {
-	Role  string           `json:"role,omitempty"`
-	Parts []googleWirePart `json:"parts"`
-}
-
-// googleWireRequest is the JSON body for generateContent / streamGenerateContent.
-type googleWireRequest struct {
-	Contents            []googleWireContent `json:"contents"`
-	SystemInstruction   *googleWireContent  `json:"systemInstruction,omitempty"`
-	GenerationConfig    *googleGenConfig    `json:"generationConfig,omitempty"`
-}
-
-// googleGenConfig holds generation parameters.
-type googleGenConfig struct {
-	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
-	Temperature     *float64 `json:"temperature,omitempty"`
-}
-
-// googleWireResponse is the JSON body returned by generateContent.
-type googleWireResponse struct {
-	Candidates []struct {
-		Content struct {
-			Parts []googleWirePart `json:"parts"`
-			Role  string           `json:"role"`
-		} `json:"content"`
-	} `json:"candidates"`
-	UsageMetadata struct {
-		PromptTokenCount     int `json:"promptTokenCount"`
-		CandidatesTokenCount int `json:"candidatesTokenCount"`
-		TotalTokenCount      int `json:"totalTokenCount"`
-	} `json:"usageMetadata"`
-}
-
 // buildWireRequest converts a canonical Request to the Gemini wire format.
 func (p *GoogleProvider) buildWireRequest(req *Request) *googleWireRequest {
 	wireReq := &googleWireRequest{
@@ -320,12 +281,12 @@ func (p *GoogleProvider) readSSEStream(r io.Reader, ch chan<- Chunk) {
 		}
 
 		for _, candidate := range wireResp.Candidates {
-			var text string
+			var sb strings.Builder
 			for _, part := range candidate.Content.Parts {
-				text += part.Text
+				sb.WriteString(part.Text)
 			}
-			if text != "" {
-				ch <- Chunk{Delta: text}
+			if sb.Len() > 0 {
+				ch <- Chunk{Delta: sb.String()}
 			}
 		}
 

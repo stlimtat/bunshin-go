@@ -83,7 +83,7 @@ func HandleSSE(logger zerolog.Logger, w http.ResponseWriter, r *http.Request, h 
 				logger.Error().Err(writeErr).Msg("sse write failed")
 			}
 			// Drain remaining chunks so the producer goroutine is not blocked.
-			go func() { //nolint:revive
+			go func() {
 				for range ch {
 				}
 			}()
@@ -91,7 +91,7 @@ func HandleSSE(logger zerolog.Logger, w http.ResponseWriter, r *http.Request, h 
 		}
 		token, _ := json.Marshal(chunk.Value)
 		if err := writeSSE(w, flusher, StreamEvent{Type: "llm_token", Token: string(token)}); err != nil {
-			go func() { //nolint:revive
+			go func() {
 				for range ch {
 				}
 			}()
