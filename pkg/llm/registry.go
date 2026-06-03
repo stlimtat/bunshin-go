@@ -14,8 +14,10 @@ const pingTimeout = 5 * time.Second
 
 // ProviderRegistry tracks LLMProvider availability via periodic pings.
 // Use WithRegistry on FallbackProvider to integrate with health endpoints.
+// Start must be called at most once; duplicate calls are no-ops.
 type ProviderRegistry struct {
 	mu           sync.RWMutex
+	startOnce    sync.Once
 	providers    []LLMProvider
 	available    map[ProviderID]bool
 	pingInterval time.Duration
@@ -52,24 +54,26 @@ func (r *ProviderRegistry) WithPingInterval(d time.Duration) *ProviderRegistry {
 
 // Start begins background health monitoring. It immediately pings all providers
 // to populate initial availability, then pings on each interval tick.
-// The goroutine exits when ctx is cancelled.
+// The goroutine exits when ctx is cancelled. Duplicate calls are no-ops.
 func (r *ProviderRegistry) Start(ctx context.Context) {
-	r.pingAll(ctx)
-	go func() {
-		r.mu.RLock()
-		interval := r.pingInterval
-		r.mu.RUnlock()
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				r.pingAll(ctx)
+	r.startOnce.Do(func() {
+		r.pingAll(ctx)
+		go func() {
+			r.mu.RLock()
+			interval := r.pingInterval
+			r.mu.RUnlock()
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					r.pingAll(ctx)
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 // IsAvailable reports whether the provider with the given ID passed its last ping.

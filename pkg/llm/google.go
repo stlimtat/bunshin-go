@@ -111,13 +111,13 @@ func (p *GoogleProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("google: marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
-		p.cfg.BaseURL, p.model, p.cfg.APIKey)
+	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", p.cfg.BaseURL, p.model)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("google: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", p.cfg.APIKey)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -160,14 +160,14 @@ func (p *GoogleProvider) StreamComplete(ctx context.Context, req *Request) (<-ch
 		return nil, fmt.Errorf("google: marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?key=%s&alt=sse",
-		p.cfg.BaseURL, p.model, p.cfg.APIKey)
+	url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", p.cfg.BaseURL, p.model)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("google: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("x-goog-api-key", p.cfg.APIKey)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -189,11 +189,12 @@ func (p *GoogleProvider) StreamComplete(ctx context.Context, req *Request) (<-ch
 
 // Ping verifies connectivity by listing models.
 func (p *GoogleProvider) Ping(ctx context.Context) error {
-	url := fmt.Sprintf("%s/v1beta/models?key=%s", p.cfg.BaseURL, p.cfg.APIKey)
+	url := fmt.Sprintf("%s/v1beta/models", p.cfg.BaseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("google: ping build request: %w", err)
 	}
+	httpReq.Header.Set("x-goog-api-key", p.cfg.APIKey)
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -23,6 +24,7 @@ import (
 //	data: {"type":"llm_token","token":"Hello"}
 //	data: {"type":"done","output":{...}}
 type HTTPTransport struct {
+	mu           sync.Mutex
 	addr         string
 	server       *http.Server
 	logger       zerolog.Logger
@@ -61,24 +63,31 @@ func (t *HTTPTransport) Serve(ctx context.Context, handler WorkflowHandler) erro
 		mux.Handle("/debug/pprof/", t.pprofHandler)
 	}
 
-	t.server = &http.Server{Addr: t.addr, Handler: mux}
+	srv := &http.Server{Addr: t.addr, Handler: mux}
+	t.mu.Lock()
+	t.server = srv
+	t.mu.Unlock()
+
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := t.server.Shutdown(shutCtx); err != nil {
+		if err := srv.Shutdown(shutCtx); err != nil {
 			t.logger.Error().Err(err).Msg("graceful shutdown incomplete")
 		}
 	}()
-	if err := t.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
 }
 
 func (t *HTTPTransport) Shutdown(ctx context.Context) error {
-	if t.server != nil {
-		return t.server.Shutdown(ctx)
+	t.mu.Lock()
+	srv := t.server
+	t.mu.Unlock()
+	if srv != nil {
+		return srv.Shutdown(ctx)
 	}
 	return nil
 }

@@ -1,32 +1,18 @@
 package transport
 
+import "strings"
+
 // IsStreamPath reports whether path ends with "/stream".
 func IsStreamPath(path string) bool {
-	return len(path) > 7 && path[len(path)-7:] == "/stream"
+	return strings.HasSuffix(path, "/stream")
 }
 
 // WorkflowIDFromPath extracts the workflow ID from a path like /workflows/{id} or /workflows/{id}/stream.
+// Returns empty string if the path has fewer than 2 non-empty segments or any segment is empty.
 func WorkflowIDFromPath(path string) string {
-	parts := splitPath(path)
-	if len(parts) >= 2 {
-		return parts[1]
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 2 || parts[1] == "" {
+		return ""
 	}
-	return ""
-}
-
-func splitPath(path string) []string {
-	var parts []string
-	start := 0
-	for i, c := range path {
-		if c == '/' {
-			if i > start {
-				parts = append(parts, path[start:i])
-			}
-			start = i + 1
-		}
-	}
-	if start < len(path) {
-		parts = append(parts, path[start:])
-	}
-	return parts
+	return parts[1]
 }
