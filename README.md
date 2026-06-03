@@ -43,7 +43,6 @@ All demo programs and the server are unified under the `bunshin` CLI.
 ### Build
 
 ```bash
-export PATH="$HOME/.local/share/mise/installs/go/1.26.4/bin:$PATH"
 go build -o bunshin ./cmd/bunshin
 ```
 
@@ -67,7 +66,6 @@ go build -o bunshin ./cmd/bunshin
 bunshin llm --message "What is Go?"
 
 # Two-step chain
-bunshin chain --input "Apple and Google are big tech companies"
 
 # Agent with arithmetic
 bunshin agent --question "3 + 4"

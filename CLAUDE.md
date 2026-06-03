@@ -4,11 +4,7 @@ Go clone of LangChain/LangGraph/LangSmith. See plan at ~/.claude/plans/drifting-
 
 ## Go version
 
-1.23+ (mise: ~/.local/share/mise/installs/go/1.26.2/bin/go)
-
-```bash
-export PATH="$HOME/.local/share/mise/installs/go/1.26.2/bin:$PATH"
-```
+1.25+
 
 ## Commands
 
