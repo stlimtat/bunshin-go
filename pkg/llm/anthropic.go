@@ -184,21 +184,10 @@ func (p *AnthropicProvider) StreamComplete(ctx context.Context, req *Request) (<
 	return ch, nil
 }
 
-// Ping verifies connectivity by sending a minimal message.
+// Ping verifies connectivity by listing available models (cost-free GET request).
 func (p *AnthropicProvider) Ping(ctx context.Context) error {
-	one := 1
-	pingReq := &Request{
-		Messages:  []Message{NewTextMessage(RoleUser, "ping")},
-		MaxTokens: &one,
-	}
-	wireReq, _ := p.buildWireRequest(pingReq, false)
-	body, err := json.Marshal(wireReq)
-	if err != nil {
-		return fmt.Errorf("anthropic: ping marshal: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		p.cfg.BaseURL+"/v1/messages", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		p.cfg.BaseURL+"/v1/models", nil)
 	if err != nil {
 		return fmt.Errorf("anthropic: ping build request: %w", err)
 	}
