@@ -35,7 +35,10 @@ Provider and model are selected from --provider / BUNSHIN_PROVIDER.`,
 }
 
 var extractEntities = core.NewRunnableFunc("extract-entities", func(_ context.Context, input any) (any, error) {
-	text := input.(string)
+	text, ok := input.(string)
+	if !ok {
+		return nil, fmt.Errorf("extract-entities: expected string input, got %T", input)
+	}
 	words := strings.Fields(text)
 	var entities []string
 	for _, w := range words {
@@ -47,8 +50,14 @@ var extractEntities = core.NewRunnableFunc("extract-entities", func(_ context.Co
 })
 
 var analyseEntities = core.NewRunnableFunc("analyse-entities", func(_ context.Context, input any) (any, error) {
-	data := input.(map[string]any)
-	entities := data["entities"].([]string)
+	data, ok := input.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("analyse-entities: expected map input, got %T", input)
+	}
+	entities, ok := data["entities"].([]string)
+	if !ok {
+		return nil, fmt.Errorf("analyse-entities: entities field missing or wrong type")
+	}
 	return fmt.Sprintf("Found %d notable entities: %v", len(entities), entities), nil
 })
 
