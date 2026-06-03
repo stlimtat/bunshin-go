@@ -47,6 +47,9 @@ func (g *Graph) Invoke(ctx context.Context, input any) (any, error) {
 	currentInput := input
 
 	for current != END {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		node, ok := g.nodes[current]
 		if !ok {
 			return nil, fmt.Errorf("graph %q: node %q not found", g.name, current)

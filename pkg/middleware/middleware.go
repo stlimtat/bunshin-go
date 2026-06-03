@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -115,10 +116,13 @@ func WithRetry(cfg RetryConfig) Middleware {
 				var lastErr error
 				for attempt := 0; attempt < cfg.MaxAttempts; attempt++ {
 					if attempt > 0 {
+						// ±25% jitter: actual wait in [0.75*delay, 1.25*delay]
+						jitter := time.Duration(rand.Int63n(int64(delay) / 2))
+						wait := delay - time.Duration(int64(delay)/4) + jitter
 						select {
 						case <-ctx.Done():
 							return nil, ctx.Err()
-						case <-time.After(delay):
+						case <-time.After(wait):
 						}
 						delay = time.Duration(float64(delay) * cfg.Multiplier)
 					}

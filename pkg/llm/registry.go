@@ -2,6 +2,8 @@ package llm
 
 import (
 	"context"
+	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,11 +17,13 @@ const pingTimeout = 5 * time.Second
 // ProviderRegistry tracks LLMProvider availability via periodic pings.
 // Use WithRegistry on FallbackProvider to integrate with health endpoints.
 // Start must be called at most once; duplicate calls are no-ops.
+// Available() returns providers sorted by ascending ping latency.
 type ProviderRegistry struct {
 	mu           sync.RWMutex
 	startOnce    sync.Once
 	providers    []LLMProvider
 	available    map[ProviderID]bool
+	latency      map[ProviderID]time.Duration // last successful ping RTT; math.MaxInt64 if no successful ping
 	pingInterval time.Duration
 	logger       zerolog.Logger
 }
@@ -28,9 +32,14 @@ type ProviderRegistry struct {
 // Use Start() to begin background health monitoring.
 // Default pingInterval is 30s; logger defaults to zerolog.Nop().
 func NewProviderRegistry(providers ...LLMProvider) *ProviderRegistry {
+	lat := make(map[ProviderID]time.Duration, len(providers))
+	for _, p := range providers {
+		lat[p.ID()] = time.Duration(math.MaxInt64)
+	}
 	return &ProviderRegistry{
 		providers:    providers,
 		available:    make(map[ProviderID]bool),
+		latency:      lat,
 		pingInterval: defaultPingInterval,
 		logger:       zerolog.Nop(),
 	}
@@ -83,7 +92,8 @@ func (r *ProviderRegistry) IsAvailable(id ProviderID) bool {
 	return r.available[id]
 }
 
-// Available returns providers that passed their last ping.
+// Available returns providers that passed their last ping, sorted by ascending
+// ping latency so callers naturally prefer the fastest live provider.
 // If no providers are available, returns all providers as a last resort.
 func (r *ProviderRegistry) Available() []LLMProvider {
 	r.mu.RLock()
@@ -98,6 +108,9 @@ func (r *ProviderRegistry) Available() []LLMProvider {
 		// Last-resort: return all providers when none passed their ping.
 		return r.providers
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return r.latency[result[i].ID()] < r.latency[result[j].ID()]
+	})
 	return result
 }
 
@@ -126,15 +139,20 @@ func (r *ProviderRegistry) pingAll(ctx context.Context) {
 			continue
 		}
 		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		start := time.Now()
 		err := pinger.Ping(pingCtx)
+		rtt := time.Since(start)
 		cancel()
 		r.mu.Lock()
 		r.available[p.ID()] = err == nil
+		if err == nil {
+			r.latency[p.ID()] = rtt
+		}
 		r.mu.Unlock()
 		if err != nil {
 			r.logger.Debug().Str("provider", string(p.ID())).Err(err).Msg("ping failed; provider marked unavailable")
 		} else {
-			r.logger.Debug().Str("provider", string(p.ID())).Msg("ping succeeded; provider marked available")
+			r.logger.Debug().Str("provider", string(p.ID())).Dur("rtt", rtt).Msg("ping succeeded; provider marked available")
 		}
 	}
 }

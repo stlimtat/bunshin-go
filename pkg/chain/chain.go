@@ -26,9 +26,13 @@ func (c *Chain) Name() string { return c.name }
 func (c *Chain) Steps() []Step { return c.steps }
 
 // Invoke executes all steps in order, threading outputs as inputs.
+// Returns ctx.Err() immediately if the context is cancelled between steps.
 func (c *Chain) Invoke(ctx context.Context, input any) (any, error) {
 	current := input
 	for _, step := range c.steps {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		out, err := step.Runnable.Invoke(ctx, current)
 		if err != nil {
 			return nil, fmt.Errorf("chain %q step %q: %w", c.name, step.ID, err)

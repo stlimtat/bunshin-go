@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // PromptComposer assembles PromptTemplates into rendered strings.
@@ -24,16 +27,30 @@ func (c *PromptComposer) WithEngine(e TemplateEngine) *PromptComposer {
 	return c
 }
 
+// fragWork holds one resolved fragment ready for rendering.
+type fragWork struct {
+	frag   *Fragment
+	merged map[string]any
+	refID  string
+}
+
 // Render assembles and renders a PromptTemplate with the given variables.
-// Fragment-level Overrides are merged on top of vars for each fragment.
+// Conditions are evaluated sequentially; qualifying fragments are fetched in
+// parallel, then rendered in original order.
 func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[string]any) (string, error) {
 	sep := t.Separator
 	if sep == "" {
 		sep = "\n\n"
 	}
 
-	var parts []string
-	for _, ref := range t.Fragments {
+	// Phase 1: evaluate conditions sequentially to determine which fragments to fetch.
+	type pendingFetch struct {
+		idx    int
+		ref    FragmentRef
+		merged map[string]any
+	}
+	var pending []pendingFetch
+	for i, ref := range t.Fragments {
 		if ref.Condition != "" {
 			result, err := c.engine.RenderLenient(ref.Condition, vars)
 			if err != nil {
@@ -44,11 +61,6 @@ func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[
 			}
 		}
 
-		frag, err := c.backend.Get(ctx, ref.ID)
-		if err != nil {
-			return "", fmt.Errorf("fragment %q: %w", ref.ID, err)
-		}
-
 		merged := make(map[string]any, len(vars)+len(ref.Overrides))
 		for k, v := range vars {
 			merged[k] = v
@@ -56,14 +68,43 @@ func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[
 		for k, v := range ref.Overrides {
 			merged[k] = v
 		}
+		pending = append(pending, pendingFetch{idx: i, ref: ref, merged: merged})
+	}
 
-		if err := frag.Validate(merged); err != nil {
-			return "", err
-		}
+	if len(pending) == 0 {
+		return "", nil
+	}
 
-		rendered, err := c.engine.Render(frag.Content, merged)
+	// Phase 2: fetch all qualifying fragments concurrently.
+	work := make([]fragWork, len(pending))
+	var mu sync.Mutex
+	g, gctx := errgroup.WithContext(ctx)
+	for i, p := range pending {
+		i, p := i, p
+		g.Go(func() error {
+			frag, err := c.backend.Get(gctx, p.ref.ID)
+			if err != nil {
+				return fmt.Errorf("fragment %q: %w", p.ref.ID, err)
+			}
+			if err := frag.Validate(p.merged); err != nil {
+				return err
+			}
+			mu.Lock()
+			work[i] = fragWork{frag: frag, merged: p.merged, refID: p.ref.ID}
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return "", err
+	}
+
+	// Phase 3: render fragments in original order (engine may not be goroutine-safe).
+	parts := make([]string, 0, len(work))
+	for _, w := range work {
+		rendered, err := c.engine.Render(w.frag.Content, w.merged)
 		if err != nil {
-			return "", fmt.Errorf("fragment %q render: %w", ref.ID, err)
+			return "", fmt.Errorf("fragment %q render: %w", w.refID, err)
 		}
 		parts = append(parts, rendered)
 	}
