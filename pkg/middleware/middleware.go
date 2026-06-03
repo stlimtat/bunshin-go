@@ -116,9 +116,11 @@ func WithRetry(cfg RetryConfig) Middleware {
 				var lastErr error
 				for attempt := 0; attempt < cfg.MaxAttempts; attempt++ {
 					if attempt > 0 {
-						// ±25% jitter: actual wait in [0.75*delay, 1.25*delay]
-						jitter := time.Duration(rand.Int63n(int64(delay) / 2))
-						wait := delay - time.Duration(int64(delay)/4) + jitter
+						wait := delay
+						// ±25% jitter when delay is large enough to split
+						if half := int64(delay) / 2; half > 0 {
+							wait = delay - time.Duration(int64(delay)/4) + time.Duration(rand.Int63n(half))
+						}
 						select {
 						case <-ctx.Done():
 							return nil, ctx.Err()
