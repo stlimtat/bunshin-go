@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/stlimtat/bunshin-go/pkg/telemetry"
+	"github.com/stlimtat/bunshin-go/internal/telemetry"
 )
 
 func TestMemoryBackend_StartAndEndRun(t *testing.T) {
