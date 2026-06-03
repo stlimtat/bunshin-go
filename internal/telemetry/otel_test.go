@@ -8,10 +8,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stlimtat/bunshin-go/internal/telemetry"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func noopTracer() trace.Tracer {
-	return trace.NewNoopTracerProvider().Tracer("test")
+	return noop.NewTracerProvider().Tracer("test")
 }
 
 func TestOTELBackend_NilTracer_Error(t *testing.T) {
