@@ -1,6 +1,8 @@
 package llm
 
 // googleWirePart is a content part in the Gemini wire format.
+// Currently text-only. Inline binary data (audio, video, document) requires
+// an inlineData or fileData structure not yet implemented.
 type googleWirePart struct {
 	Text string `json:"text"`
 }

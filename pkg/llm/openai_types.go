@@ -2,12 +2,15 @@ package llm
 
 // openAIWireMessage is the JSON message structure used by the OpenAI and
 // Azure OpenAI Chat Completions API.
+// Content is a plain string (text only). Vision/multi-modal messages require a
+// []ContentPart array type that is not yet implemented.
 type openAIWireMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// openAIWireRequest is the JSON body sent to POST /v1/chat/completions.
+// openAIWireRequest is the JSON body sent to POST /v1/chat/completions (OpenAI)
+// or the Azure OpenAI Chat Completions endpoint.
 type openAIWireRequest struct {
 	Model     string              `json:"model,omitempty"`
 	Messages  []openAIWireMessage `json:"messages"`

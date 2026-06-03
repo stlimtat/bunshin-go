@@ -104,7 +104,7 @@ func (p *AnthropicProvider) NativeMessages(msgs []Message) (any, error) {
 
 // Complete sends a non-streaming request to Anthropic and returns the full response.
 func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
-	wireReq, _ := p.buildWireRequest(req, false)
+	wireReq := p.buildWireRequest(req, false)
 	body, err := json.Marshal(wireReq)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
@@ -153,7 +153,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 
 // StreamComplete sends a streaming request to Anthropic and returns a channel of chunks.
 func (p *AnthropicProvider) StreamComplete(ctx context.Context, req *Request) (<-chan Chunk, error) {
-	wireReq, _ := p.buildWireRequest(req, true)
+	wireReq := p.buildWireRequest(req, true)
 	body, err := json.Marshal(wireReq)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
@@ -203,8 +203,7 @@ func (p *AnthropicProvider) Ping(ctx context.Context) error {
 }
 
 // buildWireRequest converts a canonical Request to the Anthropic wire format.
-// Returns the wire request and extracted system text.
-func (p *AnthropicProvider) buildWireRequest(req *Request, stream bool) (*anthropicWireRequest, string) {
+func (p *AnthropicProvider) buildWireRequest(req *Request, stream bool) *anthropicWireRequest {
 	maxTokens := p.cfg.MaxTokens
 	if req.MaxTokens != nil {
 		maxTokens = *req.MaxTokens
@@ -228,7 +227,7 @@ func (p *AnthropicProvider) buildWireRequest(req *Request, stream bool) (*anthro
 		})
 	}
 	wireReq.System = sb.String()
-	return wireReq, wireReq.System
+	return wireReq
 }
 
 // setHeaders attaches Anthropic-specific auth and versioning headers.
@@ -238,22 +237,26 @@ func (p *AnthropicProvider) setHeaders(r *http.Request) {
 	r.Header.Set("Content-Type", "application/json")
 }
 
-// checkStatus maps HTTP error codes to descriptive errors.
+// checkStatus maps HTTP error codes to descriptive errors, including the response body.
 func (p *AnthropicProvider) checkStatus(resp *http.Response) error {
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	detail := string(body)
+	if readErr != nil {
+		detail = fmt.Sprintf("<failed to read error body: %v>", readErr)
+	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("anthropic: authentication failed")
+		return fmt.Errorf("anthropic: authentication failed: %s", detail)
 	case http.StatusTooManyRequests:
-		return fmt.Errorf("anthropic: rate limit exceeded")
+		return fmt.Errorf("anthropic: rate limit exceeded: %s", detail)
 	default:
 		if resp.StatusCode >= 500 {
-			return fmt.Errorf("anthropic: server error: %s", resp.Status)
+			return fmt.Errorf("anthropic: server error %s: %s", resp.Status, detail)
 		}
-		return fmt.Errorf("anthropic: request failed: %s", string(body))
+		return fmt.Errorf("anthropic: request failed (%s): %s", resp.Status, detail)
 	}
 }
 
@@ -290,6 +293,10 @@ func (p *AnthropicProvider) readSSEStream(r io.Reader, ch chan<- Chunk) {
 			ch <- Chunk{Done: true, Usage: finalUsage}
 			return
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		ch <- Chunk{Done: true, Err: fmt.Errorf("anthropic: stream read: %w", err)}
+		return
 	}
 	// Stream ended without message_stop.
 	ch <- Chunk{Done: true, Usage: finalUsage}

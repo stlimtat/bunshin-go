@@ -134,12 +134,13 @@ func (p *GoogleProvider) Complete(ctx context.Context, req *Request) (*Response,
 		return nil, fmt.Errorf("google: decode response: %w", err)
 	}
 
-	content := ""
+	var contentBuilder strings.Builder
 	if len(wireResp.Candidates) > 0 {
 		for _, part := range wireResp.Candidates[0].Content.Parts {
-			content += part.Text
+			contentBuilder.WriteString(part.Text)
 		}
 	}
+	content := contentBuilder.String()
 
 	return &Response{
 		Content: content,
@@ -245,22 +246,26 @@ func googleRole(r Role) string {
 	}
 }
 
-// checkStatus maps HTTP error codes to descriptive errors.
+// checkStatus maps HTTP error codes to descriptive errors, including the response body.
 func (p *GoogleProvider) checkStatus(resp *http.Response) error {
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	detail := string(body)
+	if readErr != nil {
+		detail = fmt.Sprintf("<failed to read error body: %v>", readErr)
+	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("google: authentication failed")
+		return fmt.Errorf("google: authentication failed: %s", detail)
 	case http.StatusTooManyRequests:
-		return fmt.Errorf("google: rate limit exceeded")
+		return fmt.Errorf("google: rate limit exceeded: %s", detail)
 	default:
 		if resp.StatusCode >= 500 {
-			return fmt.Errorf("google: server error: %s", resp.Status)
+			return fmt.Errorf("google: server error %s: %s", resp.Status, detail)
 		}
-		return fmt.Errorf("google: request failed: %s", string(body))
+		return fmt.Errorf("google: request failed (%s): %s", resp.Status, detail)
 	}
 }
 
@@ -297,6 +302,10 @@ func (p *GoogleProvider) readSSEStream(r io.Reader, ch chan<- Chunk) {
 				TotalTokens:      wireResp.UsageMetadata.TotalTokenCount,
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		ch <- Chunk{Done: true, Err: fmt.Errorf("google: stream read: %w", err)}
+		return
 	}
 	ch <- Chunk{Done: true, Usage: finalUsage}
 }

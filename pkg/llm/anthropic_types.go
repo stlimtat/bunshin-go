@@ -1,6 +1,8 @@
 package llm
 
 // anthropicWireMessageItem is a single message in the Anthropic messages array.
+// Content is a plain string (text only). Multi-modal messages require a
+// []ContentBlock type that is not yet implemented.
 type anthropicWireMessageItem struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`

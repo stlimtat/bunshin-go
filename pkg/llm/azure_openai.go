@@ -219,22 +219,26 @@ func (p *AzureOpenAIProvider) setHeaders(r *http.Request) {
 	r.Header.Set("Content-Type", "application/json")
 }
 
-// checkStatus maps HTTP error codes to descriptive errors.
+// checkStatus maps HTTP error codes to descriptive errors, including the response body.
 func (p *AzureOpenAIProvider) checkStatus(resp *http.Response) error {
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	detail := string(body)
+	if readErr != nil {
+		detail = fmt.Sprintf("<failed to read error body: %v>", readErr)
+	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("azure-openai: authentication failed")
+		return fmt.Errorf("azure-openai: authentication failed: %s", detail)
 	case http.StatusTooManyRequests:
-		return fmt.Errorf("azure-openai: rate limit exceeded")
+		return fmt.Errorf("azure-openai: rate limit exceeded: %s", detail)
 	default:
 		if resp.StatusCode >= 500 {
-			return fmt.Errorf("azure-openai: server error: %s", resp.Status)
+			return fmt.Errorf("azure-openai: server error %s: %s", resp.Status, detail)
 		}
-		return fmt.Errorf("azure-openai: request failed: %s", string(body))
+		return fmt.Errorf("azure-openai: request failed (%s): %s", resp.Status, detail)
 	}
 }
 
@@ -270,6 +274,10 @@ func (p *AzureOpenAIProvider) readSSEStream(r io.Reader, ch chan<- Chunk) {
 			}
 		}
 		ch <- c
+	}
+	if err := scanner.Err(); err != nil {
+		ch <- Chunk{Done: true, Err: fmt.Errorf("azure-openai: stream read: %w", err)}
+		return
 	}
 	ch <- Chunk{Done: true}
 }

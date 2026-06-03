@@ -77,24 +77,42 @@ func HandleSSE(logger zerolog.Logger, w http.ResponseWriter, r *http.Request, h 
 		return
 	}
 
+	ctx := r.Context()
+	drain := func() {
+		go func() {
+			// Drain remaining chunks so the producer goroutine is not blocked.
+			for {
+				select {
+				case _, ok := <-ch:
+					if !ok {
+						return
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	for chunk := range ch {
 		if chunk.Err != nil {
 			if writeErr := writeSSE(w, flusher, StreamEvent{Type: "error", Error: chunk.Err.Error()}); writeErr != nil {
 				logger.Error().Err(writeErr).Msg("sse write failed")
 			}
-			// Drain remaining chunks so the producer goroutine is not blocked.
-			go func() {
-				for range ch {
-				}
-			}()
+			drain()
 			return
 		}
-		token, _ := json.Marshal(chunk.Value)
+		token, err := json.Marshal(chunk.Value)
+		if err != nil {
+			logger.Error().Err(err).Msg("failed to marshal stream chunk")
+			if writeErr := writeSSE(w, flusher, StreamEvent{Type: "error", Error: "internal: failed to serialize chunk"}); writeErr != nil {
+				logger.Error().Err(writeErr).Msg("sse error write failed")
+			}
+			drain()
+			return
+		}
 		if err := writeSSE(w, flusher, StreamEvent{Type: "llm_token", Token: string(token)}); err != nil {
-			go func() {
-				for range ch {
-				}
-			}()
+			drain()
 			return
 		}
 	}
