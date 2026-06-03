@@ -6,13 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	_ "net/http/pprof" // registers /debug/pprof handlers on DefaultServeMux
 	"time"
 
 	"github.com/rs/zerolog"
 )
 
-// HTTPTransport serves workflows over HTTP/2.
+// HTTPTransport serves workflows over HTTP.
 //
 // Endpoints:
 //
@@ -25,9 +24,10 @@ import (
 //	data: {"type":"llm_token","token":"Hello"}
 //	data: {"type":"done","output":{...}}
 type HTTPTransport struct {
-	addr   string
-	server *http.Server
-	logger zerolog.Logger
+	addr        string
+	server      *http.Server
+	logger      zerolog.Logger
+	pprofHandler http.Handler
 }
 
 // NewHTTPTransport constructs an HTTPTransport listening on addr (e.g. ":8080").
@@ -38,6 +38,13 @@ func NewHTTPTransport(addr string) *HTTPTransport {
 // WithLogger sets the logger for the transport.
 func (t *HTTPTransport) WithLogger(logger zerolog.Logger) *HTTPTransport {
 	t.logger = logger
+	return t
+}
+
+// WithPprof enables /debug/pprof/* endpoints using the provided handler.
+// Pass http.DefaultServeMux after importing _ "net/http/pprof" in your main package.
+func (t *HTTPTransport) WithPprof(h http.Handler) *HTTPTransport {
+	t.pprofHandler = h
 	return t
 }
 
@@ -59,8 +66,9 @@ func (t *HTTPTransport) Serve(ctx context.Context, handler WorkflowHandler) erro
 	mux.HandleFunc("/live", handleLive)
 	mux.HandleFunc("/ready", handleReady)
 
-	// Profiling — exposes /debug/pprof/* via DefaultServeMux handlers.
-	mux.Handle("/debug/pprof/", http.DefaultServeMux)
+	if t.pprofHandler != nil {
+		mux.Handle("/debug/pprof/", t.pprofHandler)
+	}
 
 	t.server = &http.Server{Addr: t.addr, Handler: mux}
 	go func() {
@@ -152,27 +160,35 @@ func (t *HTTPTransport) handleSSE(w http.ResponseWriter, r *http.Request, h Work
 	var input map[string]any
 	if raw := r.URL.Query().Get("input"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &input); err != nil {
-			_ = writeSSE(w, flusher, StreamEvent{Type: "error", Error: "invalid input JSON: " + err.Error()})
+			if writeErr := writeSSE(w, flusher, StreamEvent{Type: "error", Error: "invalid input JSON: " + err.Error()}); writeErr != nil {
+				t.logger.Error().Err(writeErr).Msg("sse write failed")
+			}
 			return
 		}
 	}
 
 	ch, err := runnable.Stream(r.Context(), input)
 	if err != nil {
-		_ = writeSSE(w, flusher, StreamEvent{Type: "error", Error: err.Error()})
+		if writeErr := writeSSE(w, flusher, StreamEvent{Type: "error", Error: err.Error()}); writeErr != nil {
+			t.logger.Error().Err(writeErr).Msg("sse write failed")
+		}
 		return
 	}
 
 	for chunk := range ch {
 		if chunk.Err != nil {
-			_ = writeSSE(w, flusher, StreamEvent{Type: "error", Error: chunk.Err.Error()})
+			if writeErr := writeSSE(w, flusher, StreamEvent{Type: "error", Error: chunk.Err.Error()}); writeErr != nil {
+				t.logger.Error().Err(writeErr).Msg("sse write failed")
+			}
 			return
 		}
 		if err := writeSSE(w, flusher, StreamEvent{Type: "llm_token", Token: fmt.Sprintf("%v", chunk.Value)}); err != nil {
 			return
 		}
 	}
-	_ = writeSSE(w, flusher, StreamEvent{Type: "done"})
+	if err := writeSSE(w, flusher, StreamEvent{Type: "done"}); err != nil {
+		t.logger.Error().Err(err).Msg("sse done write failed")
+	}
 }
 
 func writeSSE(w http.ResponseWriter, f http.Flusher, event StreamEvent) error {
