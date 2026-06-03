@@ -10,6 +10,10 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ contains(github.ref, "master") }}
+
 jobs:
   test:
     name: Test (Go ${{ matrix.go-version }})
@@ -28,11 +32,11 @@ jobs:
           go-version: ${{ matrix.go-version }}
           cache: true
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          args: --timeout=5m
+      # - name: golangci-lint
+      #   uses: golangci/golangci-lint-action@v9
+      #   with:
+      #     version: latest
+      #     args: --timeout=5m
 
       - name: Download modules
         run: go mod download

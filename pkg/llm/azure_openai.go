@@ -104,7 +104,7 @@ func (p *AzureOpenAIProvider) Complete(ctx context.Context, req *Request) (*Resp
 	if err != nil {
 		return nil, fmt.Errorf("azure-openai: http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if err := p.checkStatus(resp); err != nil {
 		return nil, err
@@ -153,14 +153,14 @@ func (p *AzureOpenAIProvider) StreamComplete(ctx context.Context, req *Request) 
 		return nil, fmt.Errorf("azure-openai: http: %w", err)
 	}
 	if err := p.checkStatus(resp); err != nil {
-		resp.Body.Close()
+		resp.Body.Close() //nolint:errcheck
 		return nil, err
 	}
 
 	ch := make(chan Chunk, 16)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		p.readSSEStream(resp.Body, ch)
 	}()
 	return ch, nil
@@ -180,7 +180,7 @@ func (p *AzureOpenAIProvider) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("azure-openai: ping: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	return p.checkStatus(resp)
 }
 
