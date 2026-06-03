@@ -72,8 +72,11 @@ func runAgent(_ *cobra.Command, _ []string) error {
 			expr := fmt.Sprintf("%v", input)
 			parts := strings.Fields(expr)
 			if len(parts) == 3 {
-				a, _ := strconv.Atoi(parts[0])
-				b, _ := strconv.Atoi(parts[2])
+				a, errA := strconv.Atoi(parts[0])
+				b, errB := strconv.Atoi(parts[2])
+				if errA != nil || errB != nil {
+					return nil, fmt.Errorf("unsupported expression: %q", expr)
+				}
 				switch parts[1] {
 				case "+":
 					return a + b, nil
@@ -97,7 +100,10 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	))
 
 	reasonNode := core.NewRunnableFunc("reason", func(_ context.Context, input any) (any, error) {
-		state := input.(agentState)
+		state, ok := input.(agentState)
+		if !ok {
+			return nil, fmt.Errorf("reason: unexpected input type %T", input)
+		}
 		if state.Done {
 			return state, nil
 		}
@@ -118,8 +124,14 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	})
 
 	toolNode := core.NewRunnableFunc("tool", func(ctx context.Context, input any) (any, error) {
-		state := input.(agentState)
-		t, _ := reg.Get("calc")
+		state, ok := input.(agentState)
+		if !ok {
+			return nil, fmt.Errorf("tool: unexpected input type %T", input)
+		}
+		t, err := reg.Get("calc")
+		if err != nil {
+			return nil, fmt.Errorf("tool: get calc: %w", err)
+		}
 		result, err := t.Invoke(ctx, state.ToolInput)
 		if err != nil {
 			return nil, err
@@ -133,7 +145,11 @@ func runAgent(_ *cobra.Command, _ []string) error {
 	})
 
 	answerNode := core.NewRunnableFunc("answer", func(_ context.Context, input any) (any, error) {
-		return input.(agentState).Answer, nil
+		state, ok := input.(agentState)
+		if !ok {
+			return nil, fmt.Errorf("answer: unexpected input type %T", input)
+		}
+		return state.Answer, nil
 	})
 
 	g := graph.New("agent-loop").
@@ -142,7 +158,7 @@ func runAgent(_ *cobra.Command, _ []string) error {
 			Runnable: reasonNode,
 			Router: graph.ConditionalRouter(
 				func(out any) string {
-					if out.(agentState).Done {
+					if s, ok := out.(agentState); ok && s.Done {
 						return "answer"
 					}
 					return "tool"

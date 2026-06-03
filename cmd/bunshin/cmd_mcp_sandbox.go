@@ -65,7 +65,10 @@ func runMCPSandbox(_ *cobra.Command, _ []string) error {
 			Parameters:  map[string]any{"type": "string"},
 		},
 		func(ctx context.Context, input any) (any, error) {
-			code, _ := input.(string)
+			code, ok := input.(string)
+			if !ok {
+				return nil, fmt.Errorf("run_python: expected string code, got %T", input)
+			}
 			result, err := sb.Exec(ctx, &sandbox.ExecRequest{
 				Language: "python",
 				Code:     code,
