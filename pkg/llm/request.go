@@ -14,13 +14,29 @@ const (
 type ContentPartType string
 
 const (
-	PartTypeImageURL   ContentPartType = "image_url"
-	PartTypeText       ContentPartType = "text"
+	// PartTypeText carries plain text.
+	PartTypeText ContentPartType = "text"
+	// PartTypeImageURL references an image by URL. The provider fetches it.
+	PartTypeImageURL ContentPartType = "image_url"
+	// PartTypeImageData carries raw image bytes inline (base64-encoded at the wire layer).
+	PartTypeImageData ContentPartType = "image_data"
+	// PartTypeAudio carries raw audio bytes inline.
+	// Supported by: OpenAI (wav/mp3), Google Gemini (wav/mp3/ogg/flac/aac).
+	PartTypeAudio ContentPartType = "audio"
+	// PartTypeVideo carries raw video bytes inline.
+	// Supported by: Google Gemini (mp4/mpeg/mov/avi/webm).
+	PartTypeVideo ContentPartType = "video"
+	// PartTypeDocument carries raw document bytes inline (PDF, plain text, etc.).
+	// Supported by: Anthropic (pdf), Google Gemini (pdf/text).
+	PartTypeDocument ContentPartType = "document"
 	PartTypeToolCall   ContentPartType = "tool_call"
 	PartTypeToolResult ContentPartType = "tool_result"
 )
 
 // ContentPart is one element of a multi-modal message.
+//
+// For binary types (PartTypeImageData, PartTypeAudio, PartTypeVideo, PartTypeDocument),
+// set Data and MimeType. The provider adapter base64-encodes Data at the wire layer.
 type ContentPart struct {
 	Type ContentPartType
 
@@ -29,6 +45,14 @@ type ContentPart struct {
 
 	// ImageURL is set when Type == PartTypeImageURL.
 	ImageURL string
+
+	// Data holds raw binary content for image_data, audio, video, and document parts.
+	// Provider adapters base64-encode this when constructing the wire request.
+	Data []byte
+
+	// MimeType declares the format of Data (e.g. "image/jpeg", "audio/wav", "video/mp4", "application/pdf").
+	// Required when Data is non-nil.
+	MimeType string
 
 	// ToolCall is set when Type == PartTypeToolCall.
 	ToolCall *ToolCall
