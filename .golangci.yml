@@ -1,0 +1,18 @@
+version: "2"
+
+run:
+  tests: false
+  timeout: 5m
+
+linters:
+  default: standard
+  settings:
+    errcheck:
+      # HTTP response body close errors are safe to ignore after successful reads.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*net/http.Response).Body.Close
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
