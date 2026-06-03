@@ -5,7 +5,7 @@
 [![Go Version](https://img.shields.io/badge/go-1.26+-blue.svg)](https://go.dev/doc/install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-![/docs/static/img/bunshin-logo-01.jpg](A gopher with a lattice that synthesizes the concepts of "chaining" LangChain and "cloning" Bunshin using modern, technical shapes and subtle, safe references to ninja tools)
+![A gopher with a lattice that synthesizes the concepts of "chaining" LangChain and "cloning" Bunshin using modern, technical shapes and subtle, safe references to ninja tools](/docs/static/img/bunshin-logo-01.png)
 
 A Go port of LangChain / LangGraph / LangSmith — production-grade LLM pipeline primitives with native concurrency, type safety, and single-binary deploys.
 
