@@ -1,0 +1,77 @@
+# Binaries
+/bunshin
+/bunshin-go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary and coverage
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Go build cache (do not commit; use GOCACHE env var)
+/vendor/
+
+# Module download cache
+/pkg/mod/
+
+# Output directories
+/dist/
+/bin/
+/build/
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets.yaml
+secrets.json
+
+# Docker
+.docker/
+
+# Test fixtures generated at runtime
+testdata/tmp/
+
+# golangci-lint cache
+.golangci-lint-cache/
+
+# Air (live-reload)
+tmp/
+
+# Profiling output
+*.prof
+*.pprof
+cpu.out
+mem.out
+trace.out
+
+# Generated protobuf
+*.pb.go
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
