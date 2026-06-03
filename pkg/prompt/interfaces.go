@@ -20,6 +20,9 @@ import "context"
 // TemplateEngine renders a template string with the given variables.
 type TemplateEngine interface {
 	Render(tmpl string, vars map[string]any) (string, error)
+	// RenderLenient renders with missing variables treated as empty strings rather than errors.
+	// Used for condition expressions where absent variables should evaluate as falsy.
+	RenderLenient(tmpl string, vars map[string]any) (string, error)
 	// Validate parses the template and returns any syntax errors.
 	Validate(tmpl string) error
 }

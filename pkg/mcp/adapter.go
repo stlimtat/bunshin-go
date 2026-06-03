@@ -14,6 +14,11 @@ type ToolAdapter struct {
 	client MCPClient
 }
 
+// NewToolAdapter constructs a ToolAdapter for the given schema and client.
+func NewToolAdapter(schema tools.ToolSchema, client MCPClient) *ToolAdapter {
+	return &ToolAdapter{schema: schema, client: client}
+}
+
 func (a *ToolAdapter) Name() string             { return a.schema.Name }
 func (a *ToolAdapter) Schema() tools.ToolSchema { return a.schema }
 
@@ -26,7 +31,10 @@ func (a *ToolAdapter) Stream(ctx context.Context, input any) (<-chan core.Stream
 	go func() {
 		defer close(ch)
 		out, err := a.Invoke(ctx, input)
-		ch <- core.StreamChunk{Value: out, Err: err}
+		select {
+		case ch <- core.StreamChunk{Value: out, Err: err}:
+		case <-ctx.Done():
+		}
 	}()
 	return ch, nil
 }
