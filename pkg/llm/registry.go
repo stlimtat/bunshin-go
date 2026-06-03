@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/stlimtat/bunshin-go/internal/telemetry"
 )
 
 const defaultPingInterval = 30 * time.Second
@@ -111,13 +112,13 @@ func (r *ProviderRegistry) Status() map[ProviderID]bool {
 // Providers that don't implement Pinger are assumed available.
 func (r *ProviderRegistry) pingAll(ctx context.Context) {
 	for _, p := range r.providers {
-		pinger, ok := p.(Pinger)
+		pinger, ok := p.(telemetry.Pinger)
 		if !ok {
-			// Non-Pinger providers are always available.
+			// Providers with no Ping method are always available.
 			r.mu.Lock()
 			r.available[p.ID()] = true
 			r.mu.Unlock()
-			r.logger.Debug().Str("provider", string(p.ID())).Msg("provider does not implement Pinger; assumed available")
+			r.logger.Debug().Str("provider", string(p.ID())).Msg("provider has no Ping method; assumed available")
 			continue
 		}
 		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
