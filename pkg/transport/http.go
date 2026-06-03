@@ -3,8 +3,13 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof handlers on DefaultServeMux
+	"time"
+
+	"github.com/rs/zerolog"
 )
 
 // HTTPTransport serves workflows over HTTP/2.
@@ -22,11 +27,18 @@ import (
 type HTTPTransport struct {
 	addr   string
 	server *http.Server
+	logger zerolog.Logger
 }
 
 // NewHTTPTransport constructs an HTTPTransport listening on addr (e.g. ":8080").
 func NewHTTPTransport(addr string) *HTTPTransport {
-	return &HTTPTransport{addr: addr}
+	return &HTTPTransport{addr: addr, logger: zerolog.Nop()}
+}
+
+// WithLogger sets the logger for the transport.
+func (t *HTTPTransport) WithLogger(logger zerolog.Logger) *HTTPTransport {
+	t.logger = logger
+	return t
 }
 
 func (t *HTTPTransport) Serve(ctx context.Context, handler WorkflowHandler) error {
@@ -42,12 +54,27 @@ func (t *HTTPTransport) Serve(ctx context.Context, handler WorkflowHandler) erro
 		}
 	})
 
+	// Health endpoints
+	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/live", handleLive)
+	mux.HandleFunc("/ready", handleReady)
+
+	// Profiling — exposes /debug/pprof/* via DefaultServeMux handlers.
+	mux.Handle("/debug/pprof/", http.DefaultServeMux)
+
 	t.server = &http.Server{Addr: t.addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
-		_ = t.server.Shutdown(context.Background())
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := t.server.Shutdown(shutCtx); err != nil {
+			t.logger.Error().Err(err).Msg("graceful shutdown incomplete")
+		}
 	}()
-	return t.server.ListenAndServe()
+	if err := t.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 func (t *HTTPTransport) Shutdown(ctx context.Context) error {
@@ -86,6 +113,7 @@ func (t *HTTPTransport) handleSync(w http.ResponseWriter, r *http.Request, h Wor
 
 	out, err := runnable.Invoke(r.Context(), req.Input)
 	resp := WorkflowResponse{ThreadID: req.ThreadID}
+	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
 		resp.Error = err.Error()
 		w.WriteHeader(http.StatusInternalServerError)
@@ -96,29 +124,19 @@ func (t *HTTPTransport) handleSync(w http.ResponseWriter, r *http.Request, h Wor
 			resp.Output = map[string]any{"result": out}
 		}
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		t.logger.Error().Err(err).Msg("response encode failed")
+	}
 }
 
 func (t *HTTPTransport) handleSSE(w http.ResponseWriter, r *http.Request, h WorkflowHandler) {
+	// Extract workflow ID from /workflows/{id}/stream — parts[1] is always the ID.
 	wfID := workflowIDFromPath(r.URL.Path)
-	if len(wfID) > 0 && wfID == "stream" {
-		parts := splitPath(r.URL.Path)
-		if len(parts) >= 2 {
-			wfID = parts[len(parts)-2]
-		}
-	}
 
 	runnable, err := h.Handle(wfID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
-	}
-
-	var input map[string]any
-	if r.URL.Query().Get("input") != "" {
-		_ = json.Unmarshal([]byte(r.URL.Query().Get("input")), &input)
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -131,26 +149,42 @@ func (t *HTTPTransport) handleSSE(w http.ResponseWriter, r *http.Request, h Work
 		return
 	}
 
+	var input map[string]any
+	if raw := r.URL.Query().Get("input"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &input); err != nil {
+			_ = writeSSE(w, flusher, StreamEvent{Type: "error", Error: "invalid input JSON: " + err.Error()})
+			return
+		}
+	}
+
 	ch, err := runnable.Stream(r.Context(), input)
 	if err != nil {
-		writeSSE(w, flusher, StreamEvent{Type: "error", Error: err.Error()})
+		_ = writeSSE(w, flusher, StreamEvent{Type: "error", Error: err.Error()})
 		return
 	}
 
 	for chunk := range ch {
 		if chunk.Err != nil {
-			writeSSE(w, flusher, StreamEvent{Type: "error", Error: chunk.Err.Error()})
+			_ = writeSSE(w, flusher, StreamEvent{Type: "error", Error: chunk.Err.Error()})
 			return
 		}
-		writeSSE(w, flusher, StreamEvent{Type: "llm_token", Token: fmt.Sprintf("%v", chunk.Value)})
+		if err := writeSSE(w, flusher, StreamEvent{Type: "llm_token", Token: fmt.Sprintf("%v", chunk.Value)}); err != nil {
+			return
+		}
 	}
-	writeSSE(w, flusher, StreamEvent{Type: "done"})
+	_ = writeSSE(w, flusher, StreamEvent{Type: "done"})
 }
 
-func writeSSE(w http.ResponseWriter, f http.Flusher, event StreamEvent) {
-	data, _ := json.Marshal(event)
-	fmt.Fprintf(w, "data: %s\n\n", data)
+func writeSSE(w http.ResponseWriter, f http.Flusher, event StreamEvent) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		return err
+	}
 	f.Flush()
+	return nil
 }
 
 func isStreamPath(path string) bool {
@@ -163,6 +197,37 @@ func workflowIDFromPath(path string) string {
 		return parts[1]
 	}
 	return ""
+}
+
+// handleHealth returns 200 with a JSON body. Used by Docker healthchecks and load balancers.
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+// handleLive returns 200 as long as the process is running (Kubernetes liveness probe).
+func handleLive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"live"}`))
+}
+
+// handleReady returns 200 when the server is ready to accept traffic (Kubernetes readiness probe).
+// Extend this to check downstream dependencies (DB, Redis) when those are wired in.
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"ready"}`))
 }
 
 func splitPath(path string) []string {

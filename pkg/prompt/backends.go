@@ -85,6 +85,9 @@ func (b *MemoryBackend) GetVersion(_ context.Context, id, version string) (*Frag
 	return f, nil
 }
 
+// Watch returns a channel that receives fragment updates.
+// The channel is buffered (capacity 4); updates are dropped when the buffer is full.
+// Consumers must drain promptly or risk missing updates.
 func (b *MemoryBackend) Watch(ctx context.Context, id string) (<-chan *Fragment, error) {
 	b.mu.Lock()
 	ch := make(chan *Fragment, 4)

@@ -86,9 +86,12 @@ func TestFaultInjection_Latency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Latency injected — execution should take some non-trivial time.
-	// (Very loose bound — CI machines can be slow.)
-	_ = time.Since(start)
+	elapsed := time.Since(start)
+	// With LatencyP99=50ms and Seed=3 the jitter is deterministic and non-zero.
+	// CI machines vary widely; allow generous upper bound of 2s.
+	if elapsed > 2*time.Second {
+		t.Fatalf("invocation took too long: %v (expected < 2s)", elapsed)
+	}
 }
 
 func TestFaultInjection_ContextCancelDuringLatency(t *testing.T) {

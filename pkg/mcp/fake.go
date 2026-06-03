@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/stlimtat/bunshin-go/pkg/tools"
 )
@@ -23,9 +24,17 @@ func (f *FakeMCPClient) Tools(_ context.Context) ([]tools.Tool, error) {
 	return f.FakeTools, f.FakeErr
 }
 
-func (f *FakeMCPClient) CallTool(_ context.Context, name string, input any) (any, error) {
+func (f *FakeMCPClient) CallTool(ctx context.Context, name string, input any) (any, error) {
 	f.CallLog = append(f.CallLog, name)
-	return input, f.FakeErr
+	if f.FakeErr != nil {
+		return nil, f.FakeErr
+	}
+	for _, t := range f.FakeTools {
+		if t.Schema().Name == name {
+			return t.Invoke(ctx, input)
+		}
+	}
+	return nil, fmt.Errorf("fake: no tool registered for %q", name)
 }
 
 func (f *FakeMCPClient) Resources(_ context.Context) ([]Resource, error) {

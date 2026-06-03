@@ -3,6 +3,7 @@ package prompt
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // PromptComposer assembles PromptTemplates into rendered strings.
@@ -34,11 +35,11 @@ func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[
 	var parts []string
 	for _, ref := range t.Fragments {
 		if ref.Condition != "" {
-			result, err := c.engine.Render(ref.Condition, vars)
+			result, err := c.engine.RenderLenient(ref.Condition, vars)
 			if err != nil {
 				return "", fmt.Errorf("fragment %q condition: %w", ref.ID, err)
 			}
-			if result == "" || result == "false" {
+			if strings.TrimSpace(result) == "" || strings.TrimSpace(result) == "false" {
 				continue
 			}
 		}

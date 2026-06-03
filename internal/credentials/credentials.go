@@ -9,12 +9,12 @@
 //
 // Usage — inject at request time:
 //
-//	ctx = credentials.WithCredential(ctx, "openai", credentials.APIKey("sk-..."))
+//	ctx = credentials.WithCredential(ctx, "openai", credentials.APIKeyCredential("sk-..."))
 //	result, err := mcpClient.CallTool(ctx, "search", input)
 //
 // Usage — inject at client construction:
 //
-//	client := mymcp.NewClient(credentials.FromEnv("OPENAI_API_KEY"))
+//	client := mymcp.NewClient(&credentials.EnvProvider{Map: map[string]string{"openai": "OPENAI_API_KEY"}})
 package credentials
 
 import "context"
