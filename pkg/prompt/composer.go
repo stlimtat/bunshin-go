@@ -68,12 +68,5 @@ func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[
 		parts = append(parts, rendered)
 	}
 
-	result := ""
-	for i, p := range parts {
-		if i > 0 {
-			result += sep
-		}
-		result += p
-	}
-	return result, nil
+	return strings.Join(parts, sep), nil
 }
