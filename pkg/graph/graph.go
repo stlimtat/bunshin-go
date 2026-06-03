@@ -75,6 +75,7 @@ func (g *Graph) Invoke(ctx context.Context, input any) (any, error) {
 
 // Stream executes the graph and wraps the terminal node's output in a single-chunk stream.
 func (g *Graph) Stream(ctx context.Context, input any) (<-chan core.StreamChunk, error) {
+	// Buffer=1: single result, send never blocks regardless of consumer timing.
 	ch := make(chan core.StreamChunk, 1)
 	go func() {
 		defer close(ch)

@@ -4,6 +4,7 @@ package llm
 type ProviderID string
 
 const (
+	ProviderFake        ProviderID = "fake"
 	ProviderOpenAI      ProviderID = "openai"
 	ProviderAzureOpenAI ProviderID = "azure-openai"
 	ProviderAnthropic   ProviderID = "anthropic"

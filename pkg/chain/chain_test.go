@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stlimtat/bunshin-go/pkg/chain"
@@ -22,9 +23,11 @@ func double() core.Runnable {
 	})
 }
 
+var errSentinel = errors.New("sentinel")
+
 func fail(msg string) core.Runnable {
 	return core.NewRunnableFunc("fail", func(_ context.Context, _ any) (any, error) {
-		return nil, errors.New(msg)
+		return nil, fmt.Errorf("%s: %w", msg, errSentinel)
 	})
 }
 
@@ -42,7 +45,10 @@ func TestChain_Invoke_Sequential(t *testing.T) {
 
 func TestChain_Invoke_SingleStep(t *testing.T) {
 	c := chain.New("single", chain.S("inc", inc()))
-	out, _ := c.Invoke(context.Background(), 5)
+	out, err := c.Invoke(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if out != 6 {
 		t.Fatalf("want 6, got %v", out)
 	}
@@ -69,11 +75,11 @@ func TestChain_Invoke_StepError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !errors.Is(err, fmt.Errorf("boom")) {
-		// Just check error contains step name.
-		if err.Error() == "" {
-			t.Fatal("expected non-empty error message")
-		}
+	if !errors.Is(err, errSentinel) {
+		t.Fatalf("expected sentinel in error chain, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fail") {
+		t.Fatalf("expected step id in error message, got: %v", err)
 	}
 }
 

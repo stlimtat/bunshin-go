@@ -131,3 +131,70 @@ func TestRunnableFunc_NilInput(t *testing.T) {
 		t.Fatalf("want nil, got %v", out)
 	}
 }
+
+func TestRunnableFunc_NilInvoke_Panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil invoke")
+		}
+	}()
+	core.NewRunnableFunc("bad", nil)
+}
+
+func TestRunnableFuncWithStream_ExplicitStreamCalled(t *testing.T) {
+	streamCalled := false
+	invoke := func(_ context.Context, input any) (any, error) { return input, nil }
+	streamFn := func(_ context.Context, input any) (<-chan core.StreamChunk, error) {
+		streamCalled = true
+		ch := make(chan core.StreamChunk, 2)
+		ch <- core.StreamChunk{Value: "chunk1"}
+		ch <- core.StreamChunk{Value: "chunk2"}
+		close(ch)
+		return ch, nil
+	}
+	r := core.NewRunnableFuncWithStream("multi", invoke, streamFn)
+	ch, err := r.Stream(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var chunks []core.StreamChunk
+	for c := range ch {
+		chunks = append(chunks, c)
+	}
+	if !streamCalled {
+		t.Fatal("explicit stream function was not called")
+	}
+	if len(chunks) != 2 {
+		t.Fatalf("want 2 chunks, got %d", len(chunks))
+	}
+	if chunks[0].Value != "chunk1" || chunks[1].Value != "chunk2" {
+		t.Fatalf("unexpected chunk values: %v", chunks)
+	}
+}
+
+func TestRunnableFuncWithStream_NilStream_FallsBackToInvoke(t *testing.T) {
+	r := core.NewRunnableFuncWithStream("fallback",
+		func(_ context.Context, input any) (any, error) { return input.(int) * 3, nil },
+		nil,
+	)
+	ch, err := r.Stream(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var chunks []core.StreamChunk
+	for c := range ch {
+		chunks = append(chunks, c)
+	}
+	if len(chunks) != 1 || chunks[0].Value != 21 {
+		t.Fatalf("want [21], got %v", chunks)
+	}
+}
+
+func TestRunnableFuncWithStream_NilInvoke_Panics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil invoke")
+		}
+	}()
+	core.NewRunnableFuncWithStream("bad", nil, nil)
+}

@@ -44,16 +44,29 @@ func (a *typedAdapter[In, Out]) Stream(ctx context.Context, input any) (<-chan S
 		go func() {
 			defer close(ch)
 			for v := range inner {
-				ch <- StreamChunk{Value: v}
+				select {
+				case ch <- StreamChunk{Value: v}:
+				case <-ctx.Done():
+					select {
+					case ch <- StreamChunk{Err: ctx.Err()}:
+					default:
+					}
+					return
+				}
 			}
 		}()
 		return ch, nil
 	}
 
+	// Single-invoke fallback: buffer=1 so the send never blocks.
 	ch := make(chan StreamChunk, 1)
 	go func() {
 		defer close(ch)
 		out, err := a.inner.Invoke(ctx, typed)
+		if ctx.Err() != nil {
+			ch <- StreamChunk{Err: ctx.Err()}
+			return
+		}
 		ch <- StreamChunk{Value: out, Err: err}
 	}()
 	return ch, nil
