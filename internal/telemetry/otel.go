@@ -38,6 +38,22 @@ func (b *OTELBackend) StartRun(ctx context.Context, run *Run) (context.Context, 
 	if ctx.Err() != nil {
 		return ctx, ctx.Err()
 	}
+
+	// Auto-parent from context — mirrors MemoryBackend behaviour.
+	if run.ParentID == nil {
+		if pid := RunIDFromContext(ctx); pid != uuid.Nil {
+			run.ParentID = &pid
+		}
+	}
+
+	// Check for duplicate before starting a span to avoid phantom spans.
+	b.mu.Lock()
+	_, exists := b.spans[run.ID]
+	b.mu.Unlock()
+	if exists {
+		return ctx, fmt.Errorf("telemetry: run %s already started", run.ID)
+	}
+
 	attrs := []attribute.KeyValue{
 		attribute.String("bunshin.run.id", run.ID.String()),
 		attribute.String("bunshin.run.type", string(run.RunType)),
@@ -47,6 +63,7 @@ func (b *OTELBackend) StartRun(ctx context.Context, run *Run) (context.Context, 
 	}
 	ctx, span := b.tracer.Start(ctx, run.Name, trace.WithAttributes(attrs...))
 
+	// Second check under lock in case of concurrent StartRun with same ID.
 	b.mu.Lock()
 	if _, exists := b.spans[run.ID]; exists {
 		b.mu.Unlock()
@@ -66,7 +83,7 @@ func (b *OTELBackend) EndRun(_ context.Context, runID uuid.UUID, _ map[string]an
 	b.mu.Unlock()
 
 	if !ok {
-		return fmt.Errorf("run %s not found", runID)
+		return fmt.Errorf("telemetry: run %s not found", runID)
 	}
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -78,7 +95,7 @@ func (b *OTELBackend) EndRun(_ context.Context, runID uuid.UUID, _ map[string]an
 	return nil
 }
 
-// AddFeedback is a no-op for OTEL; feedback belongs in LangSmith.
+// AddFeedback is a no-op; OTEL has no feedback concept. Route feedback to a dedicated store.
 func (b *OTELBackend) AddFeedback(_ context.Context, _ uuid.UUID, _ Feedback) error {
 	return nil
 }

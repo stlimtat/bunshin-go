@@ -50,7 +50,13 @@ func (h *SlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (h *SlogHandler) WithGroup(name string) slog.Handler {
-	return &SlogHandler{logger: h.logger, attrs: h.attrs, group: name}
+	// Nest groups with "." to honour the slog.Handler contract for arbitrarily
+	// deep group nesting.
+	group := name
+	if h.group != "" {
+		group = h.group + "." + name
+	}
+	return &SlogHandler{logger: h.logger, attrs: h.attrs, group: group}
 }
 
 func slogToZerolog(level slog.Level) zerolog.Level {
@@ -67,6 +73,9 @@ func slogToZerolog(level slog.Level) zerolog.Level {
 }
 
 func appendAttr(e *zerolog.Event, group string, a slog.Attr) *zerolog.Event {
+	// Resolve LogValuer before inspection so redaction/lazy-eval hooks run.
+	a.Value = a.Value.Resolve()
+
 	key := a.Key
 	if group != "" {
 		key = group + "." + key
@@ -84,6 +93,13 @@ func appendAttr(e *zerolog.Event, group string, a slog.Attr) *zerolog.Event {
 		return e.Dur(key, a.Value.Duration())
 	case slog.KindTime:
 		return e.Time(key, a.Value.Time())
+	case slog.KindGroup:
+		// Recurse with extended group prefix so nested keys are "group.key".
+		nestedGroup := key
+		for _, ga := range a.Value.Group() {
+			e = appendAttr(e, nestedGroup, ga)
+		}
+		return e
 	default:
 		return e.Interface(key, a.Value.Any())
 	}
