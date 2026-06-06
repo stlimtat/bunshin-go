@@ -86,12 +86,28 @@ func (ro *Router) handleGetThreadMessages(w http.ResponseWriter, _ *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
 }
 
-// handlePromptActivate is a stub — requires PromptCache integration.
-func (ro *Router) handlePromptActivate(w http.ResponseWriter, _ *http.Request) {
+func (ro *Router) handlePromptActivate(w http.ResponseWriter, r *http.Request) {
+	if ro.activator == nil {
+		http.Error(w, "prompt activator not configured", http.StatusNotImplemented)
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "missing prompt name", http.StatusBadRequest)
+		return
+	}
+	if err := ro.activator.Promote(r.Context(), name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// handlePromptRefresh is a stub — requires PromptCache integration.
 func (ro *Router) handlePromptRefresh(w http.ResponseWriter, _ *http.Request) {
+	if ro.refresher == nil {
+		http.Error(w, "prompt refresher not configured", http.StatusNotImplemented)
+		return
+	}
+	ro.refresher.Refresh()
 	w.WriteHeader(http.StatusAccepted)
 }

@@ -31,23 +31,22 @@ func loadConfig() Config {
 }
 
 // newProvider constructs an LLMProvider from cfg.
-// Only ProviderFake is implemented today; other providers return a clear error
-// so callers get actionable feedback rather than a panic.
 func newProvider(cfg Config) (llm.LLMProvider, error) {
+	model := llm.ModelID(cfg.Model)
 	switch cfg.Provider {
 	case "", string(llm.ProviderFake):
 		return llm.NewFakeProvider(
 			llm.ProviderFake,
 			"This is a fake response. Use --provider and --api-key to call a real LLM.",
 		), nil
-	case string(llm.ProviderOpenAI),
-		string(llm.ProviderAnthropic),
-		string(llm.ProviderGoogle),
-		string(llm.ProviderOllama):
-		return nil, fmt.Errorf(
-			"provider %q adapter not yet implemented — contribution welcome at github.com/stlimtat/bunshin-go",
-			cfg.Provider,
-		)
+	case string(llm.ProviderOpenAI):
+		return llm.NewOpenAIProvider(llm.OpenAIConfig{APIKey: cfg.APIKey, Model: model})
+	case string(llm.ProviderAnthropic):
+		return llm.NewAnthropicProvider(llm.AnthropicConfig{APIKey: cfg.APIKey, Model: model})
+	case string(llm.ProviderGoogle):
+		return llm.NewGoogleProvider(llm.GoogleConfig{APIKey: cfg.APIKey, Model: model})
+	case string(llm.ProviderOllama):
+		return nil, fmt.Errorf("provider %q: set --provider ollama and point --api-key to your Ollama host", cfg.Provider)
 	default:
 		return nil, fmt.Errorf(
 			"unknown provider %q; valid choices: fake, openai, anthropic, google, ollama",

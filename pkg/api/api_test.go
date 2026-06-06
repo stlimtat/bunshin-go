@@ -61,8 +61,28 @@ func TestRouter_ListThreads(t *testing.T) {
 	}
 }
 
-func TestRouter_PromptRefresh(t *testing.T) {
+func TestRouter_PromptRefresh_NotConfigured(t *testing.T) {
 	router := api.NewRouter(&fakeHandler{runnables: map[string]core.Runnable{}})
+	mux := http.NewServeMux()
+	router.Mount(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/prompts/refresh", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501 when no refresher configured, got %d", rec.Code)
+	}
+}
+
+type fakeRefresher struct{ called bool }
+
+func (f *fakeRefresher) Refresh() { f.called = true }
+
+func TestRouter_PromptRefresh_WithRefresher(t *testing.T) {
+	refresher := &fakeRefresher{}
+	router := api.NewRouter(
+		&fakeHandler{runnables: map[string]core.Runnable{}},
+		api.RouterConfig{Refresher: refresher},
+	)
 	mux := http.NewServeMux()
 	router.Mount(mux)
 
@@ -70,5 +90,8 @@ func TestRouter_PromptRefresh(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/prompts/refresh", nil))
 	if rec.Code != http.StatusAccepted {
 		t.Errorf("expected 202, got %d", rec.Code)
+	}
+	if !refresher.called {
+		t.Error("Refresh() not called")
 	}
 }

@@ -18,19 +18,48 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stlimtat/bunshin-go/pkg/transport"
 )
 
+// PromptActivator promotes the newest draft of a named fragment to active.
+// Implement this with prompt.PostgresStore.Promote for a full implementation.
+type PromptActivator interface {
+	Promote(ctx context.Context, name string) error
+}
+
+// PromptRefresher triggers an immediate pull from Redis into the in-process snapshot.
+// Implement this with prompt.PromptCache.Refresh.
+type PromptRefresher interface {
+	Refresh()
+}
+
+// RouterConfig holds optional backend integrations for the Router.
+// All fields are optional — unset fields result in 501 Not Implemented responses.
+type RouterConfig struct {
+	// Activator promotes prompt drafts to active.
+	Activator PromptActivator
+	// Refresher triggers a prompt cache refresh.
+	Refresher PromptRefresher
+}
+
 // Router mounts all /v1 routes onto mux.
 type Router struct {
-	handler transport.WorkflowHandler
+	handler   transport.WorkflowHandler
+	activator PromptActivator
+	refresher PromptRefresher
 }
 
 // NewRouter returns a Router backed by handler.
-func NewRouter(handler transport.WorkflowHandler) *Router {
-	return &Router{handler: handler}
+func NewRouter(handler transport.WorkflowHandler, cfg ...RouterConfig) *Router {
+	ro := &Router{handler: handler}
+	for _, c := range cfg {
+		ro.activator = c.Activator
+		ro.refresher = c.Refresher
+	}
+	return ro
 }
 
 // Mount registers all versioned API routes on mux.
