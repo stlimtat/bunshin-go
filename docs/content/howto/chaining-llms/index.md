@@ -2,6 +2,7 @@
 title = 'Chaining LLMs in Workflow Nodes'
 date = '2026-06-03'
 draft = false
+toc = true
 weight = 1
 +++
 

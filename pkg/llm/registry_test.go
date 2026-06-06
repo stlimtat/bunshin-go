@@ -156,3 +156,63 @@ func TestProviderRegistry_WithPingInterval(t *testing.T) {
 		t.Error("expected p1 available after Start")
 	}
 }
+
+func TestProviderRegistry_Register_Select(t *testing.T) {
+	high := llm.NewFakeProvider("openai-high", "")
+	low := llm.NewFakeProvider("openai-low", "")
+	anthropic := llm.NewFakeProvider("anthropic-main", "")
+
+	reg := llm.NewProviderRegistry()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	reg.Register("openai-high", high, llm.Tags{
+		"vendor": "openai", "tier": "smart", "budget": "high",
+	})
+	reg.Register("openai-low", low, llm.Tags{
+		"vendor": "openai", "tier": "fast", "budget": "low",
+	})
+	reg.Register("anthropic-main", anthropic, llm.Tags{
+		"vendor": "anthropic", "tier": "smart", "budget": "high",
+	})
+	reg.Start(ctx)
+
+	// Select openai + high budget → only openai-high
+	got := reg.Select(llm.Tag("vendor", "openai"), llm.Tag("budget", "high"))
+	if len(got) != 1 || got[0].ID() != "openai-high" {
+		t.Errorf("expected [openai-high], got %v", got)
+	}
+
+	// Select vendor=openai → both openai entries
+	got = reg.Select(llm.Tag("vendor", "openai"))
+	if len(got) != 2 {
+		t.Errorf("expected 2 openai providers, got %d", len(got))
+	}
+
+	// Select vendor=anthropic + budget=high → anthropic-main
+	got = reg.Select(llm.Tag("vendor", "anthropic"), llm.Tag("budget", "high"))
+	if len(got) != 1 || got[0].ID() != "anthropic-main" {
+		t.Errorf("expected [anthropic-main], got %v", got)
+	}
+
+	// Select non-existent tag → nil
+	got = reg.Select(llm.Tag("vendor", "cohere"))
+	if len(got) != 0 {
+		t.Errorf("expected empty, got %v", got)
+	}
+}
+
+func TestProviderRegistry_Get(t *testing.T) {
+	p := llm.NewFakeProvider("openai-high", "")
+	reg := llm.NewProviderRegistry()
+	reg.Register("openai-high", p, llm.Tags{"vendor": "openai"})
+
+	got, ok := reg.Get("openai-high")
+	if !ok || got.ID() != "openai-high" {
+		t.Errorf("expected openai-high, got ok=%v id=%v", ok, got)
+	}
+	_, ok = reg.Get("missing")
+	if ok {
+		t.Error("expected false for missing provider")
+	}
+}

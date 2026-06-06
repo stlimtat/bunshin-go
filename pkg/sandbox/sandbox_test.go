@@ -8,9 +8,9 @@ import (
 	"github.com/stlimtat/bunshin-go/pkg/sandbox"
 )
 
-func TestMockBackend_Exec_Default(t *testing.T) {
-	s := sandbox.NewMockBackend("hello")
-	res, err := s.Exec(context.Background(), &sandbox.ExecRequest{Language: "python", Code: "print('hi')"})
+func TestMockSandbox_Run_Default(t *testing.T) {
+	s := sandbox.NewMockSandbox("hello")
+	res, err := s.Run(context.Background(), sandbox.RunRequest{Language: "python", Code: "print('hi')"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -22,56 +22,82 @@ func TestMockBackend_Exec_Default(t *testing.T) {
 	}
 }
 
-func TestMockBackend_Exec_KeyedResponse(t *testing.T) {
-	s := sandbox.NewMockBackend("default")
-	s.Responses["print(1+1)"] = &sandbox.ExecResult{Stdout: "2", ExitCode: 0}
-	res, _ := s.Exec(context.Background(), &sandbox.ExecRequest{Code: "print(1+1)"})
+func TestMockSandbox_Run_KeyedResponse(t *testing.T) {
+	s := sandbox.NewMockSandbox("default")
+	s.Responses["print(1+1)"] = sandbox.RunResult{Stdout: "2", ExitCode: 0}
+	res, _ := s.Run(context.Background(), sandbox.RunRequest{Code: "print(1+1)"})
 	if res.Stdout != "2" {
 		t.Fatalf("want 2, got %q", res.Stdout)
 	}
 }
 
-func TestMockBackend_Exec_Error(t *testing.T) {
-	s := sandbox.NewMockBackend("")
+func TestMockSandbox_Run_Error(t *testing.T) {
+	s := sandbox.NewMockSandbox("")
 	s.Err = errors.New("sandbox unavailable")
-	_, err := s.Exec(context.Background(), &sandbox.ExecRequest{})
+	_, err := s.Run(context.Background(), sandbox.RunRequest{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestMockBackend_Kill_ExistingSession(t *testing.T) {
-	s := sandbox.NewMockBackend("ok")
-	res, _ := s.Exec(context.Background(), &sandbox.ExecRequest{SessionID: "sess-1"})
-	if err := s.Kill(context.Background(), res.SessionID); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestMockSandbox_Session_MultipleRuns(t *testing.T) {
+	s := sandbox.NewMockSandbox("output")
+	sess, err := s.Session(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	r1, _ := sess.Run(context.Background(), sandbox.RunRequest{Code: "step1"})
+	r2, _ := sess.Run(context.Background(), sandbox.RunRequest{Code: "step2"})
+	if r1.Stdout != "output" || r2.Stdout != "output" {
+		t.Error("expected default stdout for both runs")
+	}
+	if s.CallCount != 2 {
+		t.Errorf("expected CallCount=2, got %d", s.CallCount)
 	}
 }
 
-func TestMockBackend_Kill_MissingSession(t *testing.T) {
-	s := sandbox.NewMockBackend("")
-	err := s.Kill(context.Background(), "nonexistent")
-	if !errors.Is(err, sandbox.ErrSessionNotFound) {
-		t.Fatalf("want ErrSessionNotFound, got %v", err)
+func TestMockSandbox_Session_ClosedRejectsRun(t *testing.T) {
+	s := sandbox.NewMockSandbox("x")
+	sess, _ := s.Session(context.Background())
+	_ = sess.Close()
+	_, err := sess.Run(context.Background(), sandbox.RunRequest{})
+	if !errors.Is(err, sandbox.ErrSessionClosed) {
+		t.Errorf("expected ErrSessionClosed, got %v", err)
 	}
 }
 
-func TestMockBackend_SessionReuse(t *testing.T) {
-	s := sandbox.NewMockBackend("output")
-	req := &sandbox.ExecRequest{Code: "x=1", SessionID: "my-session"}
-	res1, _ := s.Exec(context.Background(), req)
-	res2, _ := s.Exec(context.Background(), req)
-	if res1.SessionID != res2.SessionID {
-		t.Fatalf("session IDs should match: %q vs %q", res1.SessionID, res2.SessionID)
+func TestSandboxRegistry_RegisterSelect(t *testing.T) {
+	reg := sandbox.NewSandboxRegistry()
+	s1 := sandbox.NewMockSandbox("e2b")
+	s2 := sandbox.NewMockSandbox("docker")
+
+	reg.Register("e2b-python", s1, sandbox.Tags{"env": "e2b", "language": "python"})
+	reg.Register("docker-python", s2, sandbox.Tags{"env": "docker", "language": "python"})
+
+	got := reg.Select(sandbox.Tags{"language": "python"})
+	if len(got) != 2 {
+		t.Errorf("expected 2 python sandboxes, got %d", len(got))
+	}
+
+	got = reg.Select(sandbox.Tags{"env": "e2b"})
+	if len(got) != 1 {
+		t.Errorf("expected 1 e2b sandbox, got %d", len(got))
 	}
 }
 
-func TestMockBackend_CallCount(t *testing.T) {
-	s := sandbox.NewMockBackend("x")
-	for i := 0; i < 3; i++ {
-		_, _ = s.Exec(context.Background(), &sandbox.ExecRequest{})
+func TestSandboxRegistry_Get(t *testing.T) {
+	reg := sandbox.NewSandboxRegistry()
+	s := sandbox.NewMockSandbox("x")
+	reg.Register("my-sandbox", s, sandbox.Tags{})
+
+	got, ok := reg.Get("my-sandbox")
+	if !ok || got == nil {
+		t.Error("expected to find registered sandbox")
 	}
-	if s.CallCount != 3 {
-		t.Fatalf("want CallCount=3, got %d", s.CallCount)
+	_, ok = reg.Get("missing")
+	if ok {
+		t.Error("expected false for missing sandbox")
 	}
 }

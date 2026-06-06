@@ -11,6 +11,14 @@ package llm
 
 import "context"
 
+// Embedder is an optional interface implemented by LLMProvider adapters that
+// support text embedding. Use a type assertion to check before calling.
+type Embedder interface {
+	// Embed returns a vector representation for each input text.
+	// The returned slice has the same length as texts.
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+
 // LLMProvider is the interface every model adapter implements.
 type LLMProvider interface {
 	// ID returns the provider identifier.

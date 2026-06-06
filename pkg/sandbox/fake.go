@@ -1,52 +1,73 @@
 package sandbox
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
-// MockBackend is a deterministic Sandbox for use in tests.
-// Responses are keyed by code string. If no match exists, DefaultResult is returned.
-type MockBackend struct {
-	Responses     map[string]*ExecResult
-	DefaultResult *ExecResult
+// MockSandbox is a deterministic Sandbox for use in tests.
+// Responses are keyed by code string. If no match, DefaultResult is returned.
+type MockSandbox struct {
+	mu            sync.Mutex
+	Responses     map[string]RunResult
+	DefaultResult RunResult
 	Err           error
 	CallCount     int
-	LastRequest   *ExecRequest
-	sessions      map[string]bool
+	LastRequest   RunRequest
 }
 
-// NewMockBackend constructs a MockBackend with a fixed stdout response.
-func NewMockBackend(defaultStdout string) *MockBackend {
-	return &MockBackend{
-		Responses:     make(map[string]*ExecResult),
-		DefaultResult: &ExecResult{Stdout: defaultStdout, ExitCode: 0},
-		sessions:      make(map[string]bool),
+// NewMockSandbox constructs a MockSandbox with a fixed stdout response.
+func NewMockSandbox(defaultStdout string) *MockSandbox {
+	return &MockSandbox{
+		Responses:     make(map[string]RunResult),
+		DefaultResult: RunResult{Stdout: defaultStdout, ExitCode: 0},
 	}
 }
 
-func (m *MockBackend) Exec(_ context.Context, req *ExecRequest) (*ExecResult, error) {
-	m.CallCount++
-	m.LastRequest = req
+func (m *MockSandbox) Session(_ context.Context) (Session, error) {
 	if m.Err != nil {
 		return nil, m.Err
 	}
-	if r, ok := m.Responses[req.Code]; ok {
+	return &mockSession{parent: m}, nil
+}
+
+func (m *MockSandbox) Run(ctx context.Context, req RunRequest) (RunResult, error) {
+	s, err := m.Session(ctx)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer s.Close()
+	return s.Run(ctx, req)
+}
+
+type mockSession struct {
+	mu     sync.Mutex
+	parent *MockSandbox
+	closed bool
+}
+
+func (s *mockSession) Run(_ context.Context, req RunRequest) (RunResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return RunResult{}, ErrSessionClosed
+	}
+	s.parent.mu.Lock()
+	defer s.parent.mu.Unlock()
+	s.parent.CallCount++
+	s.parent.LastRequest = req
+	if s.parent.Err != nil {
+		return RunResult{}, s.parent.Err
+	}
+	if r, ok := s.parent.Responses[req.Code]; ok {
 		return r, nil
 	}
-	sid := req.SessionID
-	if sid == "" {
-		sid = "mock-session"
-	}
-	m.sessions[sid] = true
-	result := *m.DefaultResult
-	result.SessionID = sid
-	return &result, nil
+	return s.parent.DefaultResult, nil
 }
 
-func (m *MockBackend) Kill(_ context.Context, sessionID string) error {
-	if !m.sessions[sessionID] {
-		return ErrSessionNotFound
-	}
-	delete(m.sessions, sessionID)
+func (s *mockSession) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
 	return nil
 }
-
-func (m *MockBackend) Close() error { return nil }

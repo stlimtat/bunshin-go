@@ -2,6 +2,7 @@
 title = 'Sending Images, Audio, Video, and Documents to LLMs'
 date = '2026-06-03'
 draft = false
+toc = true
 weight = 2
 +++
 
@@ -11,19 +12,21 @@ bunshin-go models multi-modal content through `ContentPart`. Each part carries a
 
 > **Implementation status**
 >
-> Image via URL (`PartTypeImageURL`) and image inline data (`PartTypeImageData`) are the only part types currently wired through the provider adapters. Audio, video, and document types (`PartTypeAudioData`, `PartTypeVideoData`, `PartTypeDocumentData`) are defined in the API and validated, but no adapter converts them to wire format yet. Use the constructor functions described below — they will work transparently once adapter support lands.
+> `PartTypeImage` is the only part type currently wired through the provider adapters. Whether the image is sent by URL or inline bytes is determined by the `Media.URL` or `Media.Data` field on the `MediaRef`, not by separate type constants. Audio, video, and document types (`PartTypeAudio`, `PartTypeVideo`, `PartTypeDocument`) are defined in the API and validated, but no adapter converts them to wire format yet. Use the constructor functions described below — they will work transparently once adapter support lands.
 
 ---
 
 ## Provider support matrix
 
+URL vs inline delivery is selected automatically from `Media.URL` (set by `NewImageURLPart`) vs `Media.Data` (set by `NewBinaryPart`/`NewBinaryPartFromBytes`) — both use `PartTypeImage`.
+
 | Content type | OpenAI | Anthropic | Google Gemini | Azure OpenAI |
 |-------------|--------|-----------|---------------|--------------|
-| Image (URL) | ✓ | ✓ | ✓ | ✓ |
-| Image (inline) | ✓ jpg/png/gif/webp | ✓ jpg/png/gif/webp | ✓ jpg/png/gif/webp | ✓ |
-| Audio | planned | — | planned | — |
-| Video | — | — | planned | — |
-| Document (PDF) | — | planned | planned | — |
+| Image (`PartTypeImage`, URL via `Media.URL`) | ✓ | ✓ | ✓ | ✓ |
+| Image (`PartTypeImage`, inline via `Media.Data`) | ✓ jpg/png/gif/webp | ✓ jpg/png/gif/webp | ✓ jpg/png/gif/webp | ✓ |
+| Audio (`PartTypeAudio`) | planned | — | planned | — |
+| Video (`PartTypeVideo`) | — | — | planned | — |
+| Document (`PartTypeDocument`, PDF) | — | planned | planned | — |
 
 ---
 
@@ -31,12 +34,12 @@ bunshin-go models multi-modal content through `ContentPart`. Each part carries a
 
 Prefer the constructor functions over struct literals — they set all required fields correctly and are forward-compatible with API changes.
 
-| Function | Use for |
-|---------|---------|
-| `llm.NewTextPart(text)` | Plain text |
-| `llm.NewImageURLPart(url)` | Remote image by URL |
-| `llm.NewBinaryPartFromBytes(partType, data, mimeType)` | Small in-memory buffers |
-| `llm.NewBinaryPart(partType, reader, size, mimeType)` | Large files via `io.Reader` |
+| Function | Use for | Sets |
+|---------|---------|------|
+| `llm.NewTextPart(text)` | Plain text | — |
+| `llm.NewImageURLPart(url)` | Remote image by URL | `Media.URL` |
+| `llm.NewBinaryPartFromBytes(partType, data, mimeType)` | Small in-memory buffers | `Media.Data`, `Media.MimeType` |
+| `llm.NewBinaryPart(partType, reader, size, mimeType)` | Large files via `io.Reader` | `Media.Data`, `Media.MimeType` |
 
 ---
 
@@ -67,7 +70,7 @@ msg := llm.Message{
     Role: llm.RoleUser,
     Parts: []llm.ContentPart{
         llm.NewTextPart("Describe this image in detail."),
-        llm.NewBinaryPartFromBytes(llm.PartTypeImageData, data, "image/jpeg"),
+        llm.NewBinaryPartFromBytes(llm.PartTypeImage, data, "image/jpeg"),
     },
 }
 resp, err := provider.Complete(ctx, &llm.Request{Messages: []llm.Message{msg}})
@@ -88,7 +91,7 @@ msg := llm.Message{
     Role: llm.RoleUser,
     Parts: []llm.ContentPart{
         llm.NewTextPart("Describe this image in detail."),
-        llm.NewBinaryPart(llm.PartTypeImageData, f, info.Size(), "image/jpeg"),
+        llm.NewBinaryPart(llm.PartTypeImage, f, info.Size(), "image/jpeg"),
     },
 }
 ```
@@ -103,8 +106,8 @@ msg := llm.Message{
     Role: llm.RoleUser,
     Parts: []llm.ContentPart{
         llm.NewTextPart("Compare these two screenshots and list the differences."),
-        llm.NewBinaryPartFromBytes(llm.PartTypeImageData, img1, "image/png"),
-        llm.NewBinaryPartFromBytes(llm.PartTypeImageData, img2, "image/png"),
+        llm.NewBinaryPartFromBytes(llm.PartTypeImage, img1, "image/png"),
+        llm.NewBinaryPartFromBytes(llm.PartTypeImage, img2, "image/png"),
     },
 }
 ```
@@ -113,7 +116,7 @@ msg := llm.Message{
 
 ## Audio
 
-> **Planned support** — `PartTypeAudioData` is defined but no provider adapter sends it to the wire yet. The code below shows the intended API.
+> **Planned support** — `PartTypeAudio` is defined but no provider adapter sends it to the wire yet. The code below shows the intended API.
 
 ```go
 audio, err := os.ReadFile("meeting.wav")
@@ -126,7 +129,7 @@ resp, err := googleProvider.Complete(ctx, &llm.Request{
         Role: llm.RoleUser,
         Parts: []llm.ContentPart{
             llm.NewTextPart("Transcribe this audio and summarise the key discussion points."),
-            llm.NewBinaryPartFromBytes(llm.PartTypeAudioData, audio, "audio/wav"),
+            llm.NewBinaryPartFromBytes(llm.PartTypeAudio, audio, "audio/wav"),
         },
     }},
 })
@@ -143,7 +146,7 @@ Supported MIME types (once wired):
 
 ## Video
 
-> **Planned support** — `PartTypeVideoData` is defined but no provider adapter sends it to the wire yet.
+> **Planned support** — `PartTypeVideo` is defined but no provider adapter sends it to the wire yet.
 
 ```go
 f, err := os.Open("demo.mp4")
@@ -158,7 +161,7 @@ resp, err := googleProvider.Complete(ctx, &llm.Request{
         Role: llm.RoleUser,
         Parts: []llm.ContentPart{
             llm.NewTextPart("Describe what happens in this video."),
-            llm.NewBinaryPart(llm.PartTypeVideoData, f, info.Size(), "video/mp4"),
+            llm.NewBinaryPart(llm.PartTypeVideo, f, info.Size(), "video/mp4"),
         },
     }},
 })
@@ -177,7 +180,7 @@ For files over 20 MB, prefer the provider's file upload API and reference the UR
 
 ## Documents (PDF)
 
-> **Planned support** — `PartTypeDocumentData` is defined but no provider adapter sends it to the wire yet.
+> **Planned support** — `PartTypeDocument` is defined but no provider adapter sends it to the wire yet.
 
 ```go
 pdf, err := os.ReadFile("contract.pdf")
@@ -189,7 +192,7 @@ resp, err := anthropicProvider.Complete(ctx, &llm.Request{
     Messages: []llm.Message{{
         Role: llm.RoleUser,
         Parts: []llm.ContentPart{
-            llm.NewBinaryPartFromBytes(llm.PartTypeDocumentData, pdf, "application/pdf"),
+            llm.NewBinaryPartFromBytes(llm.PartTypeDocument, pdf, "application/pdf"),
             llm.NewTextPart("Extract all payment terms and deadlines from this contract."),
         },
     }},
@@ -231,7 +234,7 @@ analyseImage := core.NewRunnableFunc("analyse-image", func(ctx context.Context, 
             Role: llm.RoleUser,
             Parts: []llm.ContentPart{
                 llm.NewTextPart(req.Question),
-                llm.NewBinaryPartFromBytes(llm.PartTypeImageData, data, mimeType),
+                llm.NewBinaryPartFromBytes(llm.PartTypeImage, data, mimeType),
             },
         }},
     })
@@ -241,10 +244,11 @@ analyseImage := core.NewRunnableFunc("analyse-image", func(ctx context.Context, 
     return resp.Content, nil
 })
 
-// Extract text from image, then reason over the text
-pipeline := chain.New("ocr-then-reason",
-    chain.Step{ID: "ocr", Runnable: analyseImage},
-    chain.Step{ID: "reason", Runnable: reasonRunnable},
+// Extract text from image, then reason over the text.
+// Define a shared State struct (e.g. OcrState) when both steps read/write structured fields.
+pipeline := chain.New[any]("ocr-then-reason",
+    chain.Step[any]{ID: "ocr", Runnable: analyseImage},
+    chain.Step[any]{ID: "reason", Runnable: reasonRunnable},
 )
 
 result, err := pipeline.Invoke(ctx, ImageAnalysisInput{
@@ -277,19 +281,19 @@ func FileContentPart(path string) (llm.ContentPart, *os.File, error) {
     }
     ext := strings.ToLower(filepath.Ext(path))
     types := map[string]typeInfo{
-        ".jpg":  {"image/jpeg", llm.PartTypeImageData},
-        ".jpeg": {"image/jpeg", llm.PartTypeImageData},
-        ".png":  {"image/png", llm.PartTypeImageData},
-        ".gif":  {"image/gif", llm.PartTypeImageData},
-        ".webp": {"image/webp", llm.PartTypeImageData},
-        ".wav":  {"audio/wav", llm.PartTypeAudioData},
-        ".mp3":  {"audio/mpeg", llm.PartTypeAudioData},
-        ".ogg":  {"audio/ogg", llm.PartTypeAudioData},
-        ".flac": {"audio/flac", llm.PartTypeAudioData},
-        ".mp4":  {"video/mp4", llm.PartTypeVideoData},
-        ".mov":  {"video/quicktime", llm.PartTypeVideoData},
-        ".webm": {"video/webm", llm.PartTypeVideoData},
-        ".pdf":  {"application/pdf", llm.PartTypeDocumentData},
+        ".jpg":  {"image/jpeg", llm.PartTypeImage},
+        ".jpeg": {"image/jpeg", llm.PartTypeImage},
+        ".png":  {"image/png", llm.PartTypeImage},
+        ".gif":  {"image/gif", llm.PartTypeImage},
+        ".webp": {"image/webp", llm.PartTypeImage},
+        ".wav":  {"audio/wav", llm.PartTypeAudio},
+        ".mp3":  {"audio/mpeg", llm.PartTypeAudio},
+        ".ogg":  {"audio/ogg", llm.PartTypeAudio},
+        ".flac": {"audio/flac", llm.PartTypeAudio},
+        ".mp4":  {"video/mp4", llm.PartTypeVideo},
+        ".mov":  {"video/quicktime", llm.PartTypeVideo},
+        ".webm": {"video/webm", llm.PartTypeVideo},
+        ".pdf":  {"application/pdf", llm.PartTypeDocument},
     }
 
     t, ok := types[ext]

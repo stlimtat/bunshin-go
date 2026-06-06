@@ -2,6 +2,7 @@
 title = 'Core Concepts'
 date = '2026-06-03'
 draft = false
+toc = true
 weight = 2
 +++
 
@@ -84,10 +85,10 @@ state := core.State[DocState]{
 `Chain` executes steps sequentially. Output of step N becomes input of step N+1.
 
 ```go
-pipeline := chain.New("my-chain",
-    chain.Step{ID: "extract", Runnable: extractRunnable},
-    chain.Step{ID: "reason",  Runnable: reasonRunnable},
-    chain.Step{ID: "format",  Runnable: formatRunnable},
+pipeline := chain.New[DocState]("my-chain",
+    chain.Step[DocState]{ID: "extract", Runnable: extractRunnable},
+    chain.Step[DocState]{ID: "reason",  Runnable: reasonRunnable},
+    chain.Step[DocState]{ID: "format",  Runnable: formatRunnable},
 )
 
 result, err := pipeline.Invoke(ctx, input)
@@ -104,18 +105,18 @@ result, err := pipeline.Invoke(ctx, input)
 `Graph` executes a DAG of named nodes. Each node optionally has a `Router` that inspects the node's output and returns the ID of the next node to execute (or `graph.END` to terminate).
 
 ```go
-g := graph.New("agent-loop")
-g.AddNode(graph.Node{
+g := graph.New[string]("agent-loop")
+g.AddNode(graph.Node[string]{
     ID:      "classify",
     Runnable: classifyRunnable,
-    Router: func(ctx context.Context, out any) (string, error) {
-        if out.(string) == "tool" {
+    Router: func(ctx context.Context, out core.State[string]) (string, error) {
+        if out.Data == "tool" {
             return "tool_call", nil
         }
         return graph.END, nil
     },
 })
-g.AddNode(graph.Node{ID: "tool_call", Runnable: toolRunnable})
+g.AddNode(graph.Node[string]{ID: "tool_call", Runnable: toolRunnable})
 g.SetEntry("classify")
 
 result, err := g.Invoke(ctx, input)

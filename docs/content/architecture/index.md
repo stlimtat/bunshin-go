@@ -2,6 +2,7 @@
 title = 'Architecture'
 date = '2026-06-03'
 draft = false
+toc = true
 weight = 5
 +++
 
@@ -12,25 +13,35 @@ weight = 5
 ```
 bunshin-go/
 ├── pkg/
-│   ├── core/          # Runnable interface — the composable unit of work
-│   ├── llm/           # LLMProvider interface + canonical message types
-│   ├── memory/        # MessageStore with 2M-token sliding window
-│   ├── middleware/    # Chain, WithLogging, WithRetry, WithTimeout, …
-│   ├── prompt/        # Fragment → PromptTemplate → PromptBackend
-│   ├── checkpoint/    # Checkpointer + Journal for resume/replay recovery
-│   ├── eval/          # EvalRunner + built-in evaluators
-│   ├── chain/         # Sequential step composition
-│   ├── graph/         # DAG executor with conditional routing
-│   ├── transport/     # HTTPTransport (SSE), health/live/ready/pprof endpoints
-│   ├── tools/         # Tool interface + ToolRegistry
-│   ├── mcp/           # MCP client + server (Model Context Protocol)
+│   ├── core/          # Runnable, TypedRunnable[In,Out], State[S], AsRunnable
+│   ├── llm/           # LLMProvider interface, ProviderRegistry, Embedder
+│   ├── memory/        # MessageStore — in-memory, file, Redis, Postgres, MinIO
+│   ├── vector/        # VectorStore — pgvector, in-memory; MemoryIndexer
+│   ├── middleware/    # Chain, WithLogging, WithRetry, WithTimeout, auth, …
+│   ├── auth/          # Principal, TenantID, FromContext helpers
+│   ├── prompt/        # Fragment, PromptTemplate, TemplateStore, PromptCache
+│   ├── checkpoint/    # Checkpoint + Journal, optimistic locking, resume/replay
+│   ├── eval/          # EvalRunner[In,Out], Evaluator, Dataset (LangSmith + JSONL)
+│   ├── chain/         # Sequential step composition Chain[S]
+│   ├── graph/         # Graph[S] executor, SubagentNode, routers
+│   ├── transport/     # HTTP/gRPC/SSE primitives — server, router, streaming
+│   ├── api/           # Versioned REST handlers (/v1/…) — reference impl
+│   ├── probe/         # Health/live/ready/pprof/metrics — Checker interface
+│   ├── tools/         # Tool interface, ToolRegistry, CodeExecTool
+│   ├── mcp/           # MCPClient + MCPServer (stdio + SSE transports)
 │   ├── sandbox/       # Pluggable code execution (E2B, Docker, WASM)
-│   └── testing/fault/ # FaultInjector for chaos testing
+│   ├── telemetry/     # WithLangSmith, RunContext, OTEL spans
+│   └── testing/       # FaultInjector (ErrorRate + LatencyP50)
 ├── internal/
-│   ├── credentials/   # Credential injection (context + Provider interface)
-│   └── telemetry/     # zerolog init, slog bridge, TelemetryBackend, OTELBackend
+│   └── credentials/   # API key injection at provider construction time
 ├── cmd/bunshin/       # Unified CLI (cobra + viper)
 ├── api/               # OpenAPI 3.1 specification
+├── ts/                # TypeScript frontends (pnpm workspaces)
+│   ├── apps/
+│   │   ├── llmwiki/         # Memory navigation UI
+│   │   └── graph-navigator/ # Visual graph editor + live trace viewer
+│   └── packages/
+│       └── api-client/      # Generated OpenAPI TS types + openapi-fetch client
 └── deployments/       # Dockerfile + docker-compose
 ```
 
@@ -77,26 +88,46 @@ All structured logs use [zerolog](https://github.com/rs/zerolog). Initialize onc
 logger := telemetry.NewLogger("info") // also bridges slog → zerolog for third-party libs
 ```
 
-## Credential injection
+## ProviderRegistry — key differentiator
 
-Per-request credentials flow through `context.Context`, decoupled from client construction:
+bunshin-go supports multiple instances of the same LLM vendor, each with distinct API keys, token budgets, or rate limits. Nodes select providers by `ModelTier` and tags — never by hardcoded instance names. Swapping infrastructure (key rotation, budget reallocation) requires only re-registration, not code changes.
 
 ```go
-ctx = credentials.WithCredential(ctx, "openai", credentials.APIKeyCredential(os.Getenv("OPENAI_API_KEY")))
-result, err := mcpClient.CallTool(ctx, "search", input)
+registry.Register("openai-high-budget", openai.New(openai.WithAPIKey(highKey)),
+    llm.Tags{"vendor": "openai", "tier": "smart", "budget": "high"})
+registry.Register("openai-low-budget", openai.New(openai.WithAPIKey(lowKey)),
+    llm.Tags{"vendor": "openai", "tier": "fast", "budget": "low"})
+
+// Node selects by tier + tag — no hardcoded instance name
+llmNode.WithModelTier(llm.Smart, llm.Tag("budget", "high"))
+```
+
+Per-tenant billing isolation is achieved by registering tenant-specific provider instances tagged with tenant identifiers.
+
+## Credential injection
+
+API keys are injected at provider construction time. Each `LLMProvider` instance holds its own key. Multiple instances of the same vendor coexist in the `ProviderRegistry` with different keys.
+
+```go
+openai.New(openai.WithAPIKey(os.Getenv("OPENAI_API_KEY_HIGH")))
 ```
 
 ## REST API
 
-The `HTTPTransport` exposes:
+All application endpoints carry a `/v1` prefix. Probe and metrics endpoints have no version prefix.
 
 ```
-POST /workflows/{id}          — synchronous execution
-GET  /workflows/{id}/stream   — SSE streaming (LLM tokens + step events)
-GET  /health                  — healthcheck (Docker/LB probe)
-GET  /live                    — liveness probe (Kubernetes)
-GET  /ready                   — readiness probe (Kubernetes)
-GET  /debug/pprof/*           — Go pprof profiling
+POST   /v1/workflows/{id}         — synchronous execution
+GET    /v1/workflows/{id}/stream  — SSE streaming (LLM tokens + step events)
+GET    /v1/threads                — list conversation threads
+GET    /v1/threads/{id}/messages  — thread message history
+POST   /v1/prompts/{name}/activate — activate a prompt version
+POST   /v1/prompts/refresh        — force cache refresh on this node
+
+GET    /healthz                   — liveness probe
+GET    /readyz                    — readiness probe (runs Checker chain)
+GET    /metrics                   — Prometheus metrics
+GET    /debug/pprof/*             — Go pprof profiling
 ```
 
 **SSE event types:** `step_start`, `llm_token`, `step_end`, `error`, `done`.
@@ -127,6 +158,27 @@ type MessageStore interface {
 ```
 
 `WindowFor` bypasses translation when consecutive steps use the same provider — native context transfer with zero serialisation overhead.
+
+## CLI
+
+```
+bunshin serve                       start HTTP server
+bunshin healthz <addr>              check health/readiness of remote node
+bunshin pprof   <addr>              fetch + open pprof from remote node
+bunshin version                     print build info
+
+bunshin workflow list|show|create|update|delete|run
+bunshin prompt   list|show|create|edit|activate|delete|refresh|run
+bunshin eval     list|show|create|update|delete|run
+bunshin thread   list|show|delete|export
+bunshin memory   list|show|append|delete
+bunshin vector   list|search|upsert|delete
+bunshin embed    create <text|file>  — embed text, upsert into VectorStore
+```
+
+`bunshin prompt run <id>` executes a prompt as an agent loop.
+`bunshin workflow run <id>` runs any registered Graph or Chain.
+`bunshin embed create` is the primary tool for initialising a VectorStore from a corpus.
 
 ## Recovery model
 

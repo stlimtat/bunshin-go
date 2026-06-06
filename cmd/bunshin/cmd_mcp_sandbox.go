@@ -51,11 +51,10 @@ func runMCPSandbox(_ *cobra.Command, _ []string) error {
 
 	ctx := credentials.WithCredential(context.Background(), "mcp-server", credentials.APIKeyCredential(apiKey))
 
-	sb := sandbox.NewMockBackend("Hello from sandbox!")
-	sb.Responses["print('hi')"] = &sandbox.ExecResult{
-		Stdout:    "hi\n",
-		ExitCode:  0,
-		SessionID: "session-1",
+	sb := sandbox.NewMockSandbox("Hello from sandbox!")
+	sb.Responses["print('hi')"] = sandbox.RunResult{
+		Stdout:   "hi\n",
+		ExitCode: 0,
 	}
 
 	runPython := tools.NewFuncTool(
@@ -69,7 +68,7 @@ func runMCPSandbox(_ *cobra.Command, _ []string) error {
 			if !ok {
 				return nil, fmt.Errorf("run_python: expected string code, got %T", input)
 			}
-			result, err := sb.Exec(ctx, &sandbox.ExecRequest{
+			result, err := sb.Run(ctx, sandbox.RunRequest{
 				Language: "python",
 				Code:     code,
 			})
