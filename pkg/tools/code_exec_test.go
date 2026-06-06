@@ -64,3 +64,37 @@ func TestCodeExecTool_Invoke_NoSandbox(t *testing.T) {
 func TestCodeExecTool_ImplementsTool(t *testing.T) {
 	var _ tools.Tool = tools.NewCodeExecTool(makeRegistry(""))
 }
+
+func TestCodeExecTool_Name(t *testing.T) {
+	tool := tools.NewCodeExecTool(makeRegistry(""))
+	if tool.Name() != "code_exec" {
+		t.Errorf("expected code_exec, got %q", tool.Name())
+	}
+}
+
+func TestCodeExecTool_Stream(t *testing.T) {
+	reg := makeRegistry("streamed\n")
+	tool := tools.NewCodeExecTool(reg)
+
+	ch, err := tool.Stream(context.Background(), map[string]any{
+		"language": "python",
+		"code":     "print('streamed')",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	chunk, ok := <-ch
+	if !ok {
+		t.Fatal("expected at least one chunk")
+	}
+	if chunk.Err != nil {
+		t.Fatalf("unexpected chunk error: %v", chunk.Err)
+	}
+	result, ok := chunk.Value.(tools.CodeExecOutput)
+	if !ok {
+		t.Fatalf("want CodeExecOutput in chunk, got %T", chunk.Value)
+	}
+	if result.Stdout != "streamed\n" {
+		t.Errorf("expected 'streamed\\n', got %q", result.Stdout)
+	}
+}

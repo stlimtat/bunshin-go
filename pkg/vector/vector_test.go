@@ -7,6 +7,63 @@ import (
 	"github.com/stlimtat/bunshin-go/pkg/vector"
 )
 
+// stubEmbedder returns the first len(texts) rows of a fixed matrix.
+type stubEmbedder struct{ rows [][]float32 }
+
+func (s *stubEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		if i < len(s.rows) {
+			out[i] = s.rows[i]
+		} else {
+			out[i] = []float32{0}
+		}
+	}
+	return out, nil
+}
+
+func TestMemoryIndexer_Index(t *testing.T) {
+	emb := &stubEmbedder{rows: [][]float32{{1, 0}, {0, 1}}}
+	store := vector.NewMemoryVectorStore()
+	indexer := vector.NewMemoryIndexer(emb, store)
+
+	err := indexer.Index(context.Background(), []string{"hello", "world"}, map[string]any{"tag": "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := store.Search(context.Background(), []float32{1, 0}, 5, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 docs, got %d", len(results))
+	}
+	if results[0].Content != "hello" {
+		t.Errorf("expected 'hello' as top result, got %q", results[0].Content)
+	}
+}
+
+func TestFakeVectorStore_RecordsLastQuery(t *testing.T) {
+	store := vector.NewFakeVectorStore()
+	ctx := context.Background()
+
+	_ = store.Upsert(ctx, []vector.Document{
+		{ID: "1", Content: "a", Vector: []float32{1, 0}, Metadata: map[string]any{}},
+	})
+
+	query := []float32{0.9, 0.1}
+	filter := map[string]any{"tag": "x"}
+	_, _ = store.Search(ctx, query, 3, filter)
+
+	if store.LastTopK != 3 {
+		t.Errorf("expected LastTopK=3, got %d", store.LastTopK)
+	}
+	if store.LastFilter["tag"] != "x" {
+		t.Errorf("expected LastFilter tag=x, got %v", store.LastFilter)
+	}
+}
+
 func TestMemoryVectorStore_UpsertSearch(t *testing.T) {
 	s := vector.NewMemoryVectorStore()
 	ctx := context.Background()
