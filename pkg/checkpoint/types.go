@@ -52,7 +52,10 @@ type Checkpoint struct {
 	StepIndex int
 	StepID    string
 	// State is the JSON-encoded workflow state at this checkpoint.
-	State     json.RawMessage
+	State json.RawMessage
+	// Version is the optimistic-lock counter. Incremented on every Save.
+	// Pass the value read from Load back into Save to detect concurrent writes.
+	Version   int
 	CreatedAt time.Time
 }
 
