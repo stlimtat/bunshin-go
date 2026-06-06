@@ -181,3 +181,18 @@ func TestMemoryDatasetBackend_PushResults(t *testing.T) {
 	_ = b.PushResults(context.Background(), &eval.EvalReport{ID: uuid.New()})
 	// No assertion needed — just ensure it doesn't error.
 }
+
+func TestMemoryDatasetBackend_ListDatasets(t *testing.T) {
+	b := eval.NewMemoryDatasetBackend()
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		ds := &eval.Dataset{ID: uuid.New(), Name: name}
+		_ = b.Push(context.Background(), ds)
+	}
+	list, err := b.ListDatasets(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("expected 3 datasets, got %d", len(list))
+	}
+}
