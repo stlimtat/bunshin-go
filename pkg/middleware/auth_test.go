@@ -131,3 +131,89 @@ func TestWithBearerJWTHTTP_Missing(t *testing.T) {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
 }
+
+func TestWithAPIKey_RejectsNoPrincipal(t *testing.T) {
+	guarded := middleware.Chain(echoRunnable, middleware.WithAPIKey("sk-test"))
+	_, err := guarded.Invoke(context.Background(), "input")
+	if !errors.Is(err, middleware.ErrUnauthorized) {
+		t.Errorf("expected ErrUnauthorized when no principal, got %v", err)
+	}
+}
+
+func TestWithAPIKey_AllowsWithPrincipal(t *testing.T) {
+	guarded := middleware.Chain(echoRunnable, middleware.WithAPIKey("sk-test"))
+	ctx := auth.WithContext(context.Background(), auth.Principal{Subject: "user", TenantID: "t1"})
+	out, err := guarded.Invoke(ctx, "ping")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if out != "ping" {
+		t.Errorf("expected echo, got %v", out)
+	}
+}
+
+func TestWithBearerJWT_RejectsNoToken(t *testing.T) {
+	validate := func(token string) (auth.Principal, error) {
+		return auth.Principal{Subject: "u"}, nil
+	}
+	guarded := middleware.Chain(echoRunnable, middleware.WithBearerJWT(validate))
+	_, err := guarded.Invoke(context.Background(), "input")
+	if !errors.Is(err, middleware.ErrUnauthorized) {
+		t.Errorf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestWithBearerJWT_AllowsValidToken(t *testing.T) {
+	validate := func(token string) (auth.Principal, error) {
+		if token == "tok" {
+			return auth.Principal{Subject: "u", TenantID: "t1"}, nil
+		}
+		return auth.Principal{}, errors.New("invalid")
+	}
+	guarded := middleware.Chain(echoRunnable, middleware.WithBearerJWT(validate))
+
+	// Inject token via WithBearerJWTHTTP into context, then call Runnable
+	var capturedCtx context.Context
+	innerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedCtx = r.Context()
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := middleware.WithBearerJWTHTTP(validate, innerHandler)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	out, err := guarded.Invoke(capturedCtx, "hello")
+	if err != nil {
+		t.Fatalf("expected no error with valid token, got %v", err)
+	}
+	if out != "hello" {
+		t.Errorf("expected echo, got %v", out)
+	}
+}
+
+func TestWithIPAllowlistHTTP_Allowed(t *testing.T) {
+	handler := middleware.WithIPAllowlistHTTP([]string{"127.0.0"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for allowed IP, got %d", rec.Code)
+	}
+}
+
+func TestWithIPAllowlistHTTP_Denied(t *testing.T) {
+	handler := middleware.WithIPAllowlistHTTP([]string{"10.0.0"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.168.1.5:9999"
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for denied IP, got %d", rec.Code)
+	}
+}
