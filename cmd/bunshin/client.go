@@ -1,0 +1,65 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// serverClient is a minimal HTTP client for talking to a bunshin serve instance.
+type serverClient struct {
+	baseURL string
+	http    *http.Client
+}
+
+func newServerClient(addr string) *serverClient {
+	return &serverClient{
+		baseURL: addr,
+		http:    &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// postJSON sends a JSON body to path and returns the decoded response.
+func (c *serverClient) postJSON(path string, body, out any) error {
+	var r io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
+		r = bytes.NewReader(data)
+	}
+	resp, err := c.http.Post(c.baseURL+path, "application/json", r)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("POST %s: %s: %s", path, resp.Status, b)
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}
+
+// getJSON sends a GET to path and decodes the response into out.
+func (c *serverClient) getJSON(path string, out any) error {
+	resp, err := c.http.Get(c.baseURL + path)
+	if err != nil {
+		return fmt.Errorf("GET %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GET %s: %s: %s", path, resp.Status, b)
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}

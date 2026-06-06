@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 func newPromptCmd() *cobra.Command {
@@ -11,6 +12,9 @@ func newPromptCmd() *cobra.Command {
 		Use:   "prompt",
 		Short: "Manage prompt fragments and run them as agent loops",
 	}
+	cmd.PersistentFlags().String("server", "http://localhost:8080", "bunshin server address")
+	_ = viper.BindPFlag("server", cmd.PersistentFlags().Lookup("server"))
+
 	cmd.AddCommand(
 		newPromptListCmd(),
 		newPromptShowCmd(),
@@ -29,7 +33,7 @@ func newPromptListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List fragments and their active versions",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println("prompt list: not yet implemented")
+			fmt.Println("prompt list: not yet implemented — manage via PostgresStore or MemoryBackend directly")
 			return nil
 		},
 	}
@@ -77,15 +81,27 @@ func newPromptEditCmd() *cobra.Command {
 }
 
 func newPromptActivateCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "activate <id> <version>",
-		Short: "Roll forward to a specific version (roll-forward only)",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(_ *cobra.Command, args []string) error {
-			fmt.Printf("prompt activate %q version=%q: not yet implemented\n", args[0], args[1])
+	cmd := &cobra.Command{
+		Use:   "activate <name>",
+		Short: "Roll forward the newest draft to active (POST /v1/prompts/{name}/activate)",
+		Example: `  bunshin prompt activate my-system-prompt
+  bunshin prompt activate my-system-prompt --server http://prod:8080`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			server, _ := cmd.Flags().GetString("server")
+			if server == "" {
+				server = viper.GetString("server")
+			}
+			client := newServerClient(server)
+			if err := client.postJSON("/v1/prompts/"+args[0]+"/activate", nil, nil); err != nil {
+				return err
+			}
+			fmt.Printf("prompt %q activated\n", args[0])
 			return nil
 		},
 	}
+	cmd.Flags().String("server", "http://localhost:8080", "bunshin server address")
+	return cmd
 }
 
 func newPromptDeleteCmd() *cobra.Command {
@@ -103,20 +119,33 @@ func newPromptDeleteCmd() *cobra.Command {
 func newPromptRefreshCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "refresh",
-		Short: "Force prompt cache refresh on this node",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println("prompt refresh: not yet implemented")
+		Short: "Force prompt cache refresh on the target node (POST /v1/prompts/refresh)",
+		Example: `  # Refresh this node (default)
+  bunshin prompt refresh
+
+  # Refresh a specific remote node
+  bunshin prompt refresh --server http://node2:8080`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			server, _ := cmd.Flags().GetString("server")
+			if server == "" {
+				server = viper.GetString("server")
+			}
+			client := newServerClient(server)
+			if err := client.postJSON("/v1/prompts/refresh", nil, nil); err != nil {
+				return err
+			}
+			fmt.Printf("prompt cache refresh requested on %s\n", server)
 			return nil
 		},
 	}
-	cmd.Flags().String("addr", "", "Remote node address (default: local)")
+	cmd.Flags().String("server", "http://localhost:8080", "bunshin server address")
 	return cmd
 }
 
 func newPromptRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run <id>",
-		Short: "Run a prompt fragment as an agent loop",
+		Short: "Render a prompt fragment with variables",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			fmt.Printf("prompt run %q: not yet implemented\n", args[0])

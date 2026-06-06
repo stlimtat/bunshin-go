@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"github.com/stlimtat/bunshin-go/pkg/llm"
+	"github.com/stlimtat/bunshin-go/pkg/vector"
 )
 
 // --- thread ---
@@ -13,6 +19,9 @@ func newThreadCmd() *cobra.Command {
 		Use:   "thread",
 		Short: "Manage conversation threads (MessageStore)",
 	}
+	cmd.PersistentFlags().String("server", "http://localhost:8080", "bunshin server address")
+	_ = viper.BindPFlag("server", cmd.PersistentFlags().Lookup("server"))
+
 	cmd.AddCommand(
 		newThreadListCmd(),
 		newThreadShowCmd(),
@@ -25,9 +34,16 @@ func newThreadCmd() *cobra.Command {
 func newThreadListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List conversation threads",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println("thread list: not yet implemented")
+		Short: "List conversation threads (GET /v1/threads)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			server := viper.GetString("server")
+			client := newServerClient(server)
+			var result any
+			if err := client.getJSON("/v1/threads", &result); err != nil {
+				return err
+			}
+			out, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(out))
 			return nil
 		},
 	}
@@ -36,10 +52,17 @@ func newThreadListCmd() *cobra.Command {
 func newThreadShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <id>",
-		Short: "Show thread messages",
+		Short: "Show thread messages (GET /v1/threads/{id}/messages)",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			fmt.Printf("thread show %q: not yet implemented\n", args[0])
+		RunE: func(cmd *cobra.Command, args []string) error {
+			server := viper.GetString("server")
+			client := newServerClient(server)
+			var result any
+			if err := client.getJSON("/v1/threads/"+args[0]+"/messages", &result); err != nil {
+				return err
+			}
+			out, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(out))
 			return nil
 		},
 	}
@@ -92,7 +115,7 @@ func newMemoryListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List MessageStore entries for a thread",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println("memory list: not yet implemented")
+			fmt.Println("memory list: not yet implemented — use thread show <id> via the HTTP server")
 			return nil
 		},
 	}
@@ -229,13 +252,76 @@ func newEmbedCreateCmd() *cobra.Command {
 		Short: "Embed text or file contents and upsert into VectorStore",
 		Example: `  bunshin embed create --text "Hello world"
   bunshin embed create --file ./docs/corpus.txt`,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println("embed create: not yet implemented")
-			return nil
-		},
+		RunE: runEmbedCreate,
 	}
 	cmd.Flags().String("text", "", "Text to embed (mutually exclusive with --file)")
 	cmd.Flags().String("file", "", "Path to file whose contents will be embedded")
 	cmd.Flags().StringToString("metadata", nil, "Metadata key=value pairs attached to the document")
 	return cmd
+}
+
+func runEmbedCreate(cmd *cobra.Command, _ []string) error {
+	text, _ := cmd.Flags().GetString("text")
+	filePath, _ := cmd.Flags().GetString("file")
+	metadata, _ := cmd.Flags().GetStringToString("metadata")
+
+	if text == "" && filePath == "" {
+		return fmt.Errorf("one of --text or --file is required")
+	}
+	if text != "" && filePath != "" {
+		return fmt.Errorf("--text and --file are mutually exclusive")
+	}
+	if filePath != "" {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("read file: %w", err)
+		}
+		text = string(data)
+	}
+
+	cfg := loadConfig()
+	provider, err := newProvider(cfg)
+	if err != nil {
+		return err
+	}
+
+	embedder, ok := provider.(llm.Embedder)
+	if !ok {
+		return fmt.Errorf("provider %q does not support embeddings; use --provider openai or a provider that implements Embedder", cfg.Provider)
+	}
+
+	vecs, err := embedder.Embed(context.Background(), []string{text})
+	if err != nil {
+		return fmt.Errorf("embed: %w", err)
+	}
+
+	store := vector.NewMemoryVectorStore()
+	doc := vector.Document{
+		ID:       "cli-embed-" + fmt.Sprintf("%d", len(text)),
+		Content:  text,
+		Vector:   vecs[0],
+		Metadata: make(map[string]any, len(metadata)),
+	}
+	for k, v := range metadata {
+		doc.Metadata[k] = v
+	}
+
+	if err := store.Upsert(context.Background(), []vector.Document{doc}); err != nil {
+		return fmt.Errorf("upsert: %w", err)
+	}
+
+	out, _ := json.MarshalIndent(map[string]any{
+		"id":         doc.ID,
+		"vector_dim": len(vecs[0]),
+		"content":    text[:min(len(text), 80)],
+	}, "", "  ")
+	fmt.Println(string(out))
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
