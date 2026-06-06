@@ -23,7 +23,7 @@ func TestMessage_Text_MultiPart(t *testing.T) {
 		Role: llm.RoleAssistant,
 		Parts: []llm.ContentPart{
 			{Type: llm.PartTypeText, Text: "foo"},
-			{Type: llm.PartTypeImageURL, ImageURL: "http://example.com/img.png"},
+			{Type: llm.PartTypeImage, Media: &llm.MediaRef{URL: "http://example.com/img.png"}},
 			{Type: llm.PartTypeText, Text: "bar"},
 		},
 	}

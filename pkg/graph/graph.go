@@ -7,23 +7,29 @@ import (
 	"github.com/stlimtat/bunshin-go/pkg/core"
 )
 
-// Graph executes a DAG of Nodes.
-// Implements core.Runnable — graphs compose inside chains or other graphs.
-type Graph struct {
+// Graph[S] executes a directed graph of Node[S] vertices.
+// Implements TypedRunnable[State[S], State[S]] — graphs compose inside chains
+// or other graphs via Graph.AsRunnable().
+//
+// Because Router[S] can route back to earlier nodes, Graph[S] supports cyclic
+// execution for agent loops. Callers are responsible for loop termination
+// (routing to END when done).
+type Graph[S any] struct {
 	name       string
-	nodes      map[string]*Node
+	nodes      map[string]*Node[S]
 	entryPoint string
 }
 
 // New constructs an empty Graph with the given name.
-func New(name string) *Graph {
-	return &Graph{name: name, nodes: make(map[string]*Node)}
+func New[S any](name string) *Graph[S] {
+	return &Graph[S]{name: name, nodes: make(map[string]*Node[S])}
 }
 
-func (g *Graph) Name() string { return g.name }
+// Name returns the graph identifier used in traces and logs.
+func (g *Graph[S]) Name() string { return g.name }
 
 // AddNode adds a node to the graph. Panics on duplicate ID.
-func (g *Graph) AddNode(n Node) *Graph {
+func (g *Graph[S]) AddNode(n Node[S]) *Graph[S] {
 	if _, exists := g.nodes[n.ID]; exists {
 		panic(fmt.Sprintf("graph %q: duplicate node %q", g.name, n.ID))
 	}
@@ -32,15 +38,17 @@ func (g *Graph) AddNode(n Node) *Graph {
 }
 
 // SetEntry sets the entry-point node ID. Must be called before Invoke.
-func (g *Graph) SetEntry(nodeID string) *Graph {
+func (g *Graph[S]) SetEntry(nodeID string) *Graph[S] {
 	g.entryPoint = nodeID
 	return g
 }
 
 // Invoke executes the graph starting from the entry-point node.
-func (g *Graph) Invoke(ctx context.Context, input any) (any, error) {
+// State[S] flows through nodes; each node receives and returns the full state.
+// Execution ends when a Router returns END or a node has no Router.
+func (g *Graph[S]) Invoke(ctx context.Context, input core.State[S]) (core.State[S], error) {
 	if g.entryPoint == "" {
-		return nil, fmt.Errorf("graph %q: no entry point set", g.name)
+		return input, fmt.Errorf("graph %q: no entry point set", g.name)
 	}
 
 	current := g.entryPoint
@@ -48,16 +56,16 @@ func (g *Graph) Invoke(ctx context.Context, input any) (any, error) {
 
 	for current != END {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return currentInput, err
 		}
 		node, ok := g.nodes[current]
 		if !ok {
-			return nil, fmt.Errorf("graph %q: node %q not found", g.name, current)
+			return currentInput, fmt.Errorf("graph %q: node %q not found", g.name, current)
 		}
 
 		out, err := node.Runnable.Invoke(ctx, currentInput)
 		if err != nil {
-			return nil, fmt.Errorf("graph %q node %q: %w", g.name, current, err)
+			return currentInput, fmt.Errorf("graph %q node %q: %w", g.name, current, err)
 		}
 
 		if node.Router == nil {
@@ -66,7 +74,7 @@ func (g *Graph) Invoke(ctx context.Context, input any) (any, error) {
 
 		next, err := node.Router(ctx, out)
 		if err != nil {
-			return nil, fmt.Errorf("graph %q node %q router: %w", g.name, current, err)
+			return out, fmt.Errorf("graph %q node %q router: %w", g.name, current, err)
 		}
 
 		currentInput = out
@@ -76,14 +84,7 @@ func (g *Graph) Invoke(ctx context.Context, input any) (any, error) {
 	return currentInput, nil
 }
 
-// Stream executes the graph and wraps the terminal node's output in a single-chunk stream.
-func (g *Graph) Stream(ctx context.Context, input any) (<-chan core.StreamChunk, error) {
-	// Buffer=1: single result, send never blocks regardless of consumer timing.
-	ch := make(chan core.StreamChunk, 1)
-	go func() {
-		defer close(ch)
-		out, err := g.Invoke(ctx, input)
-		ch <- core.StreamChunk{Value: out, Err: err}
-	}()
-	return ch, nil
+// AsRunnable wraps the graph as a core.Runnable for middleware composition.
+func (g *Graph[S]) AsRunnable() core.Runnable {
+	return core.AsRunnable[core.State[S], core.State[S]](g.name, g)
 }

@@ -5,6 +5,23 @@ import (
 	"fmt"
 )
 
+// TypedFunc wraps a plain function as a TypedRunnable[In, Out].
+// Useful in tests and for inline step definitions.
+func TypedFunc[In, Out any](fn func(context.Context, In) (Out, error)) TypedRunnable[In, Out] {
+	if fn == nil {
+		panic("core.TypedFunc: fn must not be nil")
+	}
+	return &typedFuncImpl[In, Out]{fn: fn}
+}
+
+type typedFuncImpl[In, Out any] struct {
+	fn func(context.Context, In) (Out, error)
+}
+
+func (t *typedFuncImpl[In, Out]) Invoke(ctx context.Context, input In) (Out, error) {
+	return t.fn(ctx, input)
+}
+
 // typedAdapter wraps TypedRunnable[In, Out] as an untyped Runnable.
 // Type assertion errors surface as runtime errors with descriptive messages.
 type typedAdapter[In, Out any] struct {

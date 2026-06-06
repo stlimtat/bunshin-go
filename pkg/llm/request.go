@@ -26,66 +26,70 @@ type ContentPartType string
 const (
 	// PartTypeText carries plain text.
 	PartTypeText ContentPartType = "text"
-	// PartTypeImageURL references an image by URL; the provider fetches it.
-	PartTypeImageURL ContentPartType = "image_url"
-	// PartTypeImageData carries raw image bytes inline (base64-encoded at the wire layer).
-	PartTypeImageData ContentPartType = "image_data"
-	// PartTypeAudioData carries raw audio bytes inline.
+	// PartTypeImage carries an image — either a remote URL or inline bytes.
+	// Set Media.URL for a remote reference; set Media.Data + Media.MimeType for inline bytes.
+	// Provider support: OpenAI (url + inline), Anthropic (url + inline), Google Gemini (url + inline).
+	PartTypeImage ContentPartType = "image"
+	// PartTypeAudio carries audio data.
 	// Planned support: OpenAI (wav/mp3), Google Gemini (wav/mp3/ogg/flac/aac).
 	// No provider adapter currently implements this type.
-	PartTypeAudioData ContentPartType = "audio_data"
-	// PartTypeVideoData carries raw video bytes inline.
+	PartTypeAudio ContentPartType = "audio"
+	// PartTypeVideo carries video data.
 	// Planned support: Google Gemini (mp4/mpeg/mov/avi/webm).
 	// No provider adapter currently implements this type.
-	PartTypeVideoData ContentPartType = "video_data"
-	// PartTypeDocumentData carries raw document bytes inline (PDF, plain text, etc.).
+	PartTypeVideo ContentPartType = "video"
+	// PartTypeDocument carries a document (PDF, plain text, etc.).
 	// Planned support: Anthropic (pdf), Google Gemini (pdf/text).
 	// No provider adapter currently implements this type.
-	PartTypeDocumentData ContentPartType = "document_data"
+	PartTypeDocument ContentPartType = "document"
 	// PartTypeToolCall is emitted by the model to request a tool invocation.
 	PartTypeToolCall ContentPartType = "tool_call"
 	// PartTypeToolResult carries the output of a tool call back to the model.
 	PartTypeToolResult ContentPartType = "tool_result"
 )
 
+// MediaRef identifies a media asset by either a remote URL or inline binary data.
+// Exactly one of URL or Data must be set.
+type MediaRef struct {
+	// URL is a remote reference. Mutually exclusive with Data.
+	URL string
+	// Data is inline binary content. Mutually exclusive with URL.
+	// Provider adapters read this once when constructing the wire request,
+	// base64-encoding as required by the wire format.
+	Data io.Reader
+	// Size is the byte count of Data (0 = unknown). Used as a Content-Length
+	// hint when uploading to provider file APIs.
+	Size int64
+	// MimeType declares the format of Data (e.g. "image/jpeg", "audio/wav",
+	// "video/mp4", "application/pdf"). Required when Data is non-nil.
+	MimeType string
+}
+
 // ContentPart is one element of a multi-modal message.
 //
 // Exactly one field group should be populated, determined by Type:
 //   - PartTypeText: Text
-//   - PartTypeImageURL: ImageURL
-//   - PartTypeImageData, PartTypeAudioData, PartTypeVideoData, PartTypeDocumentData: Data + MimeType
+//   - PartTypeImage, PartTypeAudio, PartTypeVideo, PartTypeDocument: Media
 //   - PartTypeToolCall: ToolCall
 //   - PartTypeToolResult: ToolResult
+//
+// For PartTypeImage, set Media.URL for a remote reference or Media.Data for
+// inline bytes. For other media types, set Media.Data.
 //
 // Use the constructor functions (NewTextPart, NewImageURLPart, NewBinaryPart,
 // NewBinaryPartFromBytes) to ensure valid combinations. Call Validate to verify
 // an existing ContentPart before passing it to a provider.
 //
-// Binary part types (image_data, audio_data, video_data, document_data) are
-// defined but not yet dispatched by any provider adapter; passing them will
-// currently cause an error at the wire layer.
+// Audio, video, and document part types are defined but not yet dispatched
+// by any provider adapter; passing them will cause an error at the wire layer.
 type ContentPart struct {
 	Type ContentPartType
 
 	// Text is set when Type == PartTypeText.
 	Text string
 
-	// ImageURL is set when Type == PartTypeImageURL.
-	ImageURL string
-
-	// Data holds the binary payload for image_data, audio_data, video_data,
-	// and document_data parts. Provider adapters read this once when
-	// constructing the wire request (base64-encoding as needed).
-	// Use NewBinaryPartFromBytes for in-memory slices; NewBinaryPart for streams.
-	Data io.Reader
-
-	// DataSize is the byte count of Data. Zero means unknown. Used as a
-	// Content-Length hint when uploading to provider file APIs.
-	DataSize int64
-
-	// MimeType declares the format of Data (e.g. "image/jpeg", "audio/wav",
-	// "video/mp4", "application/pdf"). Required when Data is non-nil.
-	MimeType string
+	// Media carries the image, audio, video, or document payload.
+	Media *MediaRef
 
 	// ToolCall is set when Type == PartTypeToolCall.
 	ToolCall *ToolCall
@@ -99,27 +103,28 @@ func NewTextPart(text string) ContentPart {
 	return ContentPart{Type: PartTypeText, Text: text}
 }
 
-// NewImageURLPart constructs an image-by-URL ContentPart.
+// NewImageURLPart constructs an image ContentPart referencing a remote URL.
 func NewImageURLPart(url string) ContentPart {
-	return ContentPart{Type: PartTypeImageURL, ImageURL: url}
+	return ContentPart{Type: PartTypeImage, Media: &MediaRef{URL: url}}
 }
 
-// NewBinaryPart constructs a binary ContentPart from a streaming reader.
-// partType must be one of PartTypeImageData, PartTypeAudioData, PartTypeVideoData,
-// or PartTypeDocumentData. size is the byte count of data (0 = unknown).
+// NewBinaryPart constructs a media ContentPart from a streaming reader.
+// partType must be one of PartTypeImage, PartTypeAudio, PartTypeVideo, or PartTypeDocument.
+// size is the byte count of data (0 = unknown).
 func NewBinaryPart(partType ContentPartType, data io.Reader, size int64, mimeType string) ContentPart {
-	return ContentPart{Type: partType, Data: data, DataSize: size, MimeType: mimeType}
+	return ContentPart{Type: partType, Media: &MediaRef{Data: data, Size: size, MimeType: mimeType}}
 }
 
-// NewBinaryPartFromBytes constructs a binary ContentPart from an in-memory slice.
-// partType must be one of PartTypeImageData, PartTypeAudioData, PartTypeVideoData,
-// or PartTypeDocumentData.
+// NewBinaryPartFromBytes constructs a media ContentPart from an in-memory slice.
+// partType must be one of PartTypeImage, PartTypeAudio, PartTypeVideo, or PartTypeDocument.
 func NewBinaryPartFromBytes(partType ContentPartType, data []byte, mimeType string) ContentPart {
 	return ContentPart{
-		Type:     partType,
-		Data:     bytes.NewReader(data),
-		DataSize: int64(len(data)),
-		MimeType: mimeType,
+		Type: partType,
+		Media: &MediaRef{
+			Data:     bytes.NewReader(data),
+			Size:     int64(len(data)),
+			MimeType: mimeType,
+		},
 	}
 }
 
@@ -130,16 +135,18 @@ func (p ContentPart) Validate() error {
 		if p.Text == "" {
 			return fmt.Errorf("llm: text part has empty Text")
 		}
-	case PartTypeImageURL:
-		if p.ImageURL == "" {
-			return fmt.Errorf("llm: image_url part has empty ImageURL")
+	case PartTypeImage, PartTypeAudio, PartTypeVideo, PartTypeDocument:
+		if p.Media == nil {
+			return fmt.Errorf("llm: %s part has nil Media", p.Type)
 		}
-	case PartTypeImageData, PartTypeAudioData, PartTypeVideoData, PartTypeDocumentData:
-		if p.Data == nil {
-			return fmt.Errorf("llm: %s part has nil Data", p.Type)
+		if p.Media.URL == "" && p.Media.Data == nil {
+			return fmt.Errorf("llm: %s part Media has neither URL nor Data", p.Type)
 		}
-		if p.MimeType == "" {
-			return fmt.Errorf("llm: %s part has empty MimeType", p.Type)
+		if p.Media.URL != "" && p.Media.Data != nil {
+			return fmt.Errorf("llm: %s part Media has both URL and Data set", p.Type)
+		}
+		if p.Media.Data != nil && p.Media.MimeType == "" {
+			return fmt.Errorf("llm: %s part Media.Data requires MimeType", p.Type)
 		}
 	case PartTypeToolCall:
 		if p.ToolCall == nil {

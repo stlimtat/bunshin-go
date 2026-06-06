@@ -1,33 +1,36 @@
 // Package chain provides sequential Runnable composition.
 //
-// A Chain executes Steps in order, threading the output of each step as
-// the input of the next. Each step can specify its own ModelConfig, enabling
-// fast-model → reasoning-model patterns within a single chain.
+// A Chain[S] executes Steps in order, threading State[S] through each step.
+// Each step can specify its own ModelConfig, enabling fast-model → reasoning-model
+// patterns within a single chain.
 //
-// Chain itself implements the Runnable interface, so chains compose recursively.
+// Chain[S] implements TypedRunnable[State[S], State[S]] and can be nested inside
+// other chains or graphs via core.AsRunnable.
 package chain
 
 import (
+	"context"
+
 	"github.com/stlimtat/bunshin-go/pkg/core"
 	"github.com/stlimtat/bunshin-go/pkg/llm"
 )
 
-// Step is one element of a Chain.
-type Step struct {
+// Step[S] is one typed element of a Chain[S].
+type Step[S any] struct {
 	// ID identifies the step in traces and journal entries.
 	ID string
 	// Runnable is the unit of work for this step.
-	Runnable core.Runnable
+	Runnable core.TypedRunnable[core.State[S], core.State[S]]
 	// Model optionally specifies which LLM model this step should use.
 	Model *llm.ModelConfig
 }
 
-// S is a convenience constructor for a Step without a model config.
-func S(id string, r core.Runnable) Step {
-	return Step{ID: id, Runnable: r}
+// Func wraps a plain function as a Step[S]. Convenience for tests and inline definitions.
+func Func[S any](id string, fn func(context.Context, core.State[S]) (core.State[S], error)) Step[S] {
+	return Step[S]{ID: id, Runnable: core.TypedFunc(fn)}
 }
 
-// SWithModel constructs a Step with an explicit model config.
-func SWithModel(id string, r core.Runnable, model llm.ModelConfig) Step {
-	return Step{ID: id, Runnable: r, Model: &model}
+// FuncWithModel wraps a plain function as a Step[S] with an explicit model config.
+func FuncWithModel[S any](id string, fn func(context.Context, core.State[S]) (core.State[S], error), model llm.ModelConfig) Step[S] {
+	return Step[S]{ID: id, Runnable: core.TypedFunc(fn), Model: &model}
 }

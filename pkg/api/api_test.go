@@ -139,6 +139,23 @@ func TestRouter_WorkflowStream_SSE(t *testing.T) {
 	}
 }
 
+func TestRouter_GetThreadMessages(t *testing.T) {
+	router := api.NewRouter(&fakeHandler{runnables: map[string]core.Runnable{}})
+	mux := http.NewServeMux()
+	router.Mount(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/threads/thread-123/messages", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if _, ok := body["messages"]; !ok {
+		t.Error("expected 'messages' key in response")
+	}
+}
+
 func TestRouter_PromptActivate_NotConfigured(t *testing.T) {
 	router := api.NewRouter(&fakeHandler{runnables: map[string]core.Runnable{}})
 	mux := http.NewServeMux()
