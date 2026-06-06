@@ -131,3 +131,12 @@ func TestMemoryJournal_EmptyEntries(t *testing.T) {
 		t.Fatalf("want 0, got %d", len(entries))
 	}
 }
+
+// ---- FreqEveryN ----
+
+func TestFreqEveryN(t *testing.T) {
+	f := checkpoint.FreqEveryN(5)
+	if int(f) != 5 {
+		t.Errorf("expected FreqEveryN(5)=5, got %d", int(f))
+	}
+}
