@@ -83,10 +83,34 @@ func newThreadDeleteCmd() *cobra.Command {
 func newThreadExportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export <id>",
-		Short: "Export thread as NDJSON or Markdown",
+		Short: "Export thread messages as NDJSON or Markdown",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			fmt.Printf("thread export %q: not yet implemented\n", args[0])
+		RunE: func(cmd *cobra.Command, args []string) error {
+			format, _ := cmd.Flags().GetString("format")
+			server := viper.GetString("server")
+			client := newServerClient(server)
+
+			var result map[string]any
+			if err := client.getJSON("/v1/threads/"+args[0]+"/messages", &result); err != nil {
+				return err
+			}
+
+			msgs, _ := result["messages"].([]any)
+			switch format {
+			case "markdown":
+				fmt.Printf("# Thread: %s\n\n", args[0])
+				for _, m := range msgs {
+					msg, _ := m.(map[string]any)
+					role, _ := msg["role"].(string)
+					content, _ := msg["content"].(string)
+					fmt.Printf("**%s**\n\n%s\n\n---\n\n", role, content)
+				}
+			default: // ndjson
+				for _, m := range msgs {
+					line, _ := json.Marshal(m)
+					fmt.Println(string(line))
+				}
+			}
 			return nil
 		},
 	}
@@ -310,18 +334,15 @@ func runEmbedCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("upsert: %w", err)
 	}
 
+	preview := text
+	if len(preview) > 80 {
+		preview = preview[:80]
+	}
 	out, _ := json.MarshalIndent(map[string]any{
 		"id":         doc.ID,
 		"vector_dim": len(vecs[0]),
-		"content":    text[:min(len(text), 80)],
+		"content":    preview,
 	}, "", "  ")
 	fmt.Println(string(out))
 	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
