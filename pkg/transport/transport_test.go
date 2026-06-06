@@ -101,11 +101,48 @@ func TestHTTPTransport_SyncEndpoint_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestHTTPTransport_SSEEndpoint(t *testing.T) {
+	h := transport.NewMapHandler()
+	h.Register("stream-wf", core.NewRunnableFuncWithStream(
+		"stream-wf",
+		func(_ context.Context, input any) (any, error) { return input, nil },
+		func(_ context.Context, input any) (<-chan core.StreamChunk, error) {
+			ch := make(chan core.StreamChunk, 1)
+			ch <- core.StreamChunk{Value: "token"}
+			close(ch)
+			return ch, nil
+		},
+	))
+	tr := transport.NewHTTPTransport(":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/stream-wf/stream", nil)
+	w := httptest.NewRecorder()
+
+	buildMux(h, tr).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("expected text/event-stream, got %q", ct)
+	}
+}
+
+func TestHTTPTransport_MethodNotAllowed(t *testing.T) {
+	h := echoHandler()
+	tr := transport.NewHTTPTransport(":0")
+	req := httptest.NewRequest(http.MethodDelete, "/workflows/echo", nil)
+	w := httptest.NewRecorder()
+	buildMux(h, tr).ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", w.Code)
+	}
+}
+
 // buildMux replicates the HTTPTransport's internal mux for unit testing
 // without starting a real server.
 func buildMux(h transport.WorkflowHandler, tr *transport.HTTPTransport) *http.ServeMux {
 	mux := http.NewServeMux()
-	// Register a test-compatible handler that delegates to the transport.
 	mux.HandleFunc("/workflows/", func(w http.ResponseWriter, r *http.Request) {
 		tr.HandleRequest(w, r, h)
 	})
