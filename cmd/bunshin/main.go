@@ -2,18 +2,24 @@
 //
 // # Subcommands
 //
-//	bunshin serve         Start the HTTP workflow server
-//	bunshin health        Check server health
-//	bunshin version       Print version information
-//	bunshin docs          Generate CLI documentation (markdown)
-//	bunshin llm           Single LLM call demo
-//	bunshin chain         Two-step entity extraction chain demo
-//	bunshin agent         Agent loop with tools demo
-//	bunshin mcp-sandbox   MCP tool discovery + sandboxed code execution demo
+//	bunshin serve           Start the HTTP workflow server
+//	bunshin healthz <addr>  Check health/readiness of a remote node
+//	bunshin pprof <addr>    Fetch and open pprof from a remote node
+//	bunshin version         Print version information
+//	bunshin docs            Generate CLI documentation (markdown)
+//	bunshin llm             Single LLM call demo
+//	bunshin mcp-sandbox     MCP tool discovery + sandboxed code execution demo
+//	bunshin workflow        Workflow CRUD and run
+//	bunshin prompt          Prompt fragment CRUD, lifecycle, and run
+//	bunshin eval            Eval suite CRUD and run
+//	bunshin thread          Conversation thread management
+//	bunshin memory          MessageStore CRUD
+//	bunshin vector          VectorStore CRUD and search
+//	bunshin embed           Embed text and upsert into VectorStore
 //
 // # Global flags (all subcommands)
 //
-//	--provider   LLM provider: fake|openai|anthropic|google|ollama  (BUNSHIN_PROVIDER)
+//	--provider   LLM provider instance ID (BUNSHIN_PROVIDER)
 //	--model      Model ID (BUNSHIN_MODEL)
 //	--api-key    API key for the chosen provider (BUNSHIN_API_KEY)
 //	--log-level  Log level: debug|info|warn|error (BUNSHIN_LOG_LEVEL)
@@ -54,9 +60,8 @@ Run "bunshin docs" to generate full CLI documentation in markdown.`,
 		},
 	}
 
-	// Persistent flags — inherited by every subcommand.
 	pf := root.PersistentFlags()
-	pf.String("provider", "fake", "LLM provider: fake|openai|anthropic|google|ollama")
+	pf.String("provider", "fake", "LLM provider instance ID")
 	pf.String("model", "", "Model ID (default: provider-specific)")
 	pf.String("api-key", "", "API key for the chosen provider")
 	pf.String("log-level", "info", "Log level: debug|info|warn|error")
@@ -68,13 +73,19 @@ Run "bunshin docs" to generate full CLI documentation in markdown.`,
 
 	root.AddCommand(
 		newServeCmd(),
-		newHealthCmd(),
+		newHealthzCmd(),
+		newPprofCmd(),
 		newVersionCmd(),
 		newDocsCmd(),
 		newLLMCmd(),
-		newChainCmd(),
-		newAgentCmd(),
 		newMCPSandboxCmd(),
+		newWorkflowCmd(),
+		newPromptCmd(),
+		newEvalCmd(),
+		newThreadCmd(),
+		newMemoryCmd(),
+		newVectorCmd(),
+		newEmbedCmd(),
 	)
 	return root
 }

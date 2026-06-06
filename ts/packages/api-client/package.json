@@ -1,0 +1,19 @@
+{
+  "name": "@bunshin/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generated OpenAPI client for bunshin-go REST API",
+  "main": "./src/index.ts",
+  "scripts": {
+    "codegen": "openapi-typescript ../../api/openapi.yaml -o ./src/schema.d.ts",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.13.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.0.0",
+    "typescript": "^5.7.0"
+  }
+}
