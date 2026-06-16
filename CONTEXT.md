@@ -80,6 +80,62 @@ _Avoid_: History store, conversation buffer
 The most-recent N tokens of messages returned by `MessageStore.Window`. Not a fixed count of messages.
 _Avoid_: Context window (that's the LLM's limit), sliding window (acceptable but verbose)
 
+### Workflow (declarative)
+
+**WorkflowSpec**:
+A declarative YAML definition of a graph workflow, compiled at load time to a `Graph[core.State[map[string]any]]`. Has a `name`, an ordered list of `nodes`, and optional `router:` per node. Linear pipelines omit `router:` and `next:` — the compiler auto-wires each node to the next in list order; the last node routes to `END`. Cyclic graphs (agent loops) declare `router:` explicitly. Single execution model — there is no `Chain` vs `Graph` distinction in YAML.
+_Avoid_: WorkflowDefinition, Pipeline, FlowSpec
+
+**WorkflowNode (YAML)**:
+One vertex in a `WorkflowSpec`. Has an `id`, a `runnable:` (tagged union of `type: llm | tool | custom`), and optional `router:` (for cycles or branching). `input_key` / `output_key` fields move data between `State.Data` (`map[string]any`) and the node's I/O. The `custom` type is the escape hatch — references a Go-registered `Runnable` by name in `RunnableRegistry`.
+_Avoid_: Step (reserved for `Chain`), block, action
+
+**workflow.Registries**:
+Compile-time dependency struct passed to `workflow.Compile`. Fields: `LLM *llm.ProviderRegistry`, `Tools *tools.ToolRegistry`, `Custom *workflow.RunnableRegistry`, `Prompts prompt.TemplateStore`. Workflows reference registry entries by name/tier; the compiler resolves at compile time, surfacing missing refs as compile errors, not runtime panics.
+_Avoid_: Container, Dependencies, ResolverContext
+
+**workflow.Store**:
+Interface for persisting `WorkflowSpec` artifacts with `draft → active` versioning (same lifecycle as `Fragment`). Methods: `Create`, `Get` (active), `GetVersion`, `List`, `ListVersions`, `Activate`, `Delete` (soft). Version string is `"sha256:" + hex16(canonical_yaml)` — identical content yields identical version across all backends, making `Create` idempotent and migrations safe. Backends in `pkg/workflow/store/{memory,postgres,blob,git}`; each is a sub-package so callers import only the deps they need.
+_Avoid_: WorkflowRepository, SpecStore
+
+**RunnableRegistry**:
+A name → `core.Runnable` map used by YAML `custom` nodes to invoke Go-defined Runnables. Lives in `pkg/workflow`; populated at process start by application code; read-only at runtime.
+_Avoid_: NodeRegistry, CustomRegistry
+
+### Routers (EIP catalog)
+
+**RouterRegistry**:
+A name → `Router[map[string]any]` factory map. YAML `router: { type: X, config: ... }` looks up `X` here. Application code registers EIP routers at startup. Bunshin ships a v1 catalog modelled on Apache Camel's Enterprise Integration Patterns.
+_Avoid_: EIPRegistry, RouterCatalog
+
+**Content-Based Router**:
+`router.type: content_based`. Reads a key from `State.Meta` and matches the value against a `cases` map. Most common router for agent loops — the LLM node writes `bunshin.next_action` into Meta; the router branches.
+_Avoid_: switch (too generic), conditional
+
+**Message Filter**:
+`router.type: filter`. Evaluates a predicate (`condition: { key, op, value }`); if false, routes to `END`, skipping all downstream nodes. Used for cache-hit early-exit, guard clauses.
+_Avoid_: skip, guard
+
+**Routing Slip**:
+`router.type: routing_slip`. Reads an ordered list of node IDs from `State.Meta[slip_key]` and routes through them in order. Enables "LLM emits a plan, executor runs it" pattern.
+_Avoid_: plan_router, sequence
+
+**Recipient List**:
+`router.type: recipient_list`. Fans out to multiple named nodes; each receives the same input. Outputs collected via `Aggregator` (paired). Enables parallel LLM calls (ensemble, multi-perspective summarisation).
+_Avoid_: multicast, fanout
+
+**Splitter**:
+`router.type: splitter`. Reads a slice from `State.Data[input_key]`, runs the next node once per item with `State.Data[item_key]` set to each item. Used for chunk-and-process flows (long documents).
+_Avoid_: forEach, iterator
+
+**Aggregator**:
+`router.type: aggregator`. Collects N outputs from a Recipient List or Splitter into a single slice at `State.Data[output_key]`. Always paired with one of those upstream.
+_Avoid_: gather, reducer
+
+**Custom Router**:
+`router.type: custom`. Looks up a named entry in the application-provided portion of `RouterRegistry`. The escape hatch for routing logic that can't be expressed declaratively.
+_Avoid_: user_router, function_router
+
 ### Multi-agent
 
 **SubagentNode**:
