@@ -1,62 +1,47 @@
-// Package fault provides the FaultInjector middleware for HA and chaos testing.
+// Package fault provides middleware factories for chaos / HA testing.
 //
-// FaultInjector wraps a Runnable and injects configurable failures to simulate
-// real-world failure modes:
-//   - Transient errors (rate limits, timeouts, network blips)
-//   - Added latency (slow provider responses)
-//   - Partial failures (some calls succeed, some fail)
+// Two fault types are available, each independently composable via middleware.Chain:
 //
-// Use in integration tests to verify that retry, fallback, and recovery
-// mechanisms behave correctly under adversity.
+//   - [ErrorRate] returns an error on a random fraction of calls.
+//   - [LatencyP50] sleeps for a triangular-distributed duration before each call.
 //
 // Example:
 //
-//	chain := middleware.Chain(myLLMRunnable,
-//	    fault.WithFaultInjection(fault.Config{
-//	        ErrorRate:  0.3,
-//	        ErrorTypes: []fault.ErrorType{fault.Timeout, fault.RateLimit},
-//	        LatencyP99: 500 * time.Millisecond,
-//	    }),
-//	    middleware.WithRetry(...),
+//	r = middleware.Chain(r,
+//	    fault.ErrorRate(0.3, context.DeadlineExceeded),
+//	    fault.LatencyP50(100*time.Millisecond, 500*time.Millisecond),
 //	)
+//
+// For deterministic tests, supply a seeded source:
+//
+//	fault.ErrorRate(0.5, errBoom, fault.WithSource(rand.NewSource(42)))
 package fault
 
 import (
-	"context"
-	"errors"
+	"math/rand"
 	"time"
 )
 
-// ErrorType classifies injected errors by the failure mode they simulate.
-type ErrorType string
+// Option configures a fault middleware instance.
+type Option func(*faultConfig)
 
-const (
-	// Timeout simulates context.DeadlineExceeded.
-	Timeout ErrorType = "timeout"
-	// RateLimit simulates HTTP 429 / provider rate limit responses.
-	RateLimit ErrorType = "rate_limit"
-	// Unavailable simulates HTTP 503 / service unavailable.
-	Unavailable ErrorType = "unavailable"
-	// InternalError simulates HTTP 500 / unexpected provider errors.
-	InternalError ErrorType = "internal_error"
-)
-
-// errorMessages maps each ErrorType to its sentinel error value.
-var errorMessages = map[ErrorType]error{
-	Timeout:       context.DeadlineExceeded,
-	RateLimit:     errors.New("rate limit exceeded (429)"),
-	Unavailable:   errors.New("service unavailable (503)"),
-	InternalError: errors.New("internal provider error (500)"),
+// WithSource replaces the default random source with src.
+// Use rand.NewSource(seed) in tests for deterministic fault sequences.
+func WithSource(src rand.Source) Option {
+	return func(c *faultConfig) { c.src = src }
 }
 
-// Config controls fault injection behaviour.
-type Config struct {
-	// ErrorRate is the probability [0.0, 1.0] that any given call returns an error.
-	ErrorRate float64
-	// ErrorTypes lists the error types to inject. Defaults to [Unavailable] if empty.
-	ErrorTypes []ErrorType
-	// LatencyP99 adds random latency up to this value to every call.
-	LatencyP99 time.Duration
-	// Seed for the random number generator. 0 uses a time-based seed.
-	Seed int64
+type faultConfig struct {
+	src rand.Source
+}
+
+func newRand(opts []Option) *rand.Rand {
+	cfg := &faultConfig{}
+	for _, o := range opts {
+		o(cfg)
+	}
+	if cfg.src == nil {
+		cfg.src = rand.NewSource(time.Now().UnixNano())
+	}
+	return rand.New(cfg.src) //nolint:gosec // fault injection uses math/rand intentionally
 }

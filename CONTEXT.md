@@ -241,7 +241,7 @@ _Avoid_: `agent` command (use `prompt run`), `chain` command (use `workflow run`
 ### Testing
 
 **FaultInjector**:
-Middleware in `pkg/testing` that wraps a `Runnable` and injects errors and latency on a configurable schedule. Used for HA testing — validates circuit breakers, retries, and timeout handling. Two fault types: `ErrorRate(probability, err)` and `LatencyP50(median, max)`. Partial-stream injection is out of scope.
+Middleware in `pkg/testing/fault` that wraps a `Runnable` and injects errors and latency on a configurable schedule. Used for HA testing — validates circuit breakers, retries, and timeout handling. Two fault types: `fault.ErrorRate(probability, err)` and `fault.LatencyP50(median, max)`, each independently composable via `middleware.Chain`. Latency uses a triangular distribution `[0, max]` peaking at `median` so the `median` parameter is the true P50. Partial-stream injection is out of scope.
 _Avoid_: ChaosMiddleware, failure injector
 
 ### Multi-tenancy
