@@ -13,10 +13,6 @@
 //	    created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 //	    UNIQUE (tenant_id, name, version)
 //	);
-//	-- Enforces at most one active version per workflow per tenant.
-//	CREATE UNIQUE INDEX IF NOT EXISTS idx_bunshin_wf_one_active
-//	    ON bunshin_workflows (tenant_id, name)
-//	    WHERE status = 'active' AND deleted_at IS NULL;
 //	CREATE INDEX IF NOT EXISTS idx_bunshin_wf_tenant_name
 //	    ON bunshin_workflows (tenant_id, name) WHERE deleted_at IS NULL;
 //
@@ -46,9 +42,6 @@ CREATE TABLE IF NOT EXISTS bunshin_workflows (
     created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, name, version)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bunshin_wf_one_active
-    ON bunshin_workflows (tenant_id, name)
-    WHERE status = 'active' AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_bunshin_wf_tenant_name
     ON bunshin_workflows (tenant_id, name) WHERE deleted_at IS NULL;
 `
@@ -74,8 +67,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 }
 
 // Create persists spec as a new draft. Idempotent: identical version is a no-op.
-// If the workflow was previously soft-deleted and version doesn't exist yet,
-// only that specific row's deleted_at is cleared — not the entire workflow history.
+// Resurrects soft-deleted entries (clears deleted_at).
 func (s *Store) Create(ctx context.Context, tenantID string, spec *workflow.Spec) (string, error) {
 	if spec == nil {
 		return "", fmt.Errorf("workflow/postgres: Create: spec is nil")
@@ -85,14 +77,18 @@ func (s *Store) Create(ctx context.Context, tenantID string, spec *workflow.Spec
 		return "", fmt.Errorf("workflow/postgres: marshal spec: %w", err)
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	// Resurrect any soft-deleted rows for this name first.
+	_, err = s.pool.Exec(ctx,
+		`UPDATE bunshin_workflows
+		    SET deleted_at = NULL
+		  WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NOT NULL`,
+		tenantID, spec.Name,
+	)
 	if err != nil {
-		return "", fmt.Errorf("workflow/postgres: Create begin: %w", err)
+		return "", fmt.Errorf("workflow/postgres: resurrect: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck
 
-	// Attempt idempotent insert.
-	tag, err := tx.Exec(ctx,
+	_, err = s.pool.Exec(ctx,
 		`INSERT INTO bunshin_workflows (tenant_id, name, version, spec, status)
 		      VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (tenant_id, name, version) DO NOTHING`,
@@ -101,24 +97,7 @@ func (s *Store) Create(ctx context.Context, tenantID string, spec *workflow.Spec
 	if err != nil {
 		return "", fmt.Errorf("workflow/postgres: insert: %w", err)
 	}
-
-	// Only resurrect if the row is new (was just inserted).
-	// A row that already exists doesn't need clearing.
-	if tag.RowsAffected() > 0 {
-		// Clear deleted_at only for the specific version we just inserted,
-		// in case the name was previously soft-deleted.
-		_, err = tx.Exec(ctx,
-			`UPDATE bunshin_workflows
-			    SET deleted_at = NULL
-			  WHERE tenant_id = $1 AND name = $2 AND version = $3 AND deleted_at IS NOT NULL`,
-			tenantID, spec.Name, spec.Version,
-		)
-		if err != nil {
-			return "", fmt.Errorf("workflow/postgres: resurrect: %w", err)
-		}
-	}
-
-	return spec.Version, tx.Commit(ctx)
+	return spec.Version, nil
 }
 
 // Get returns the active version, or workflow.ErrNotFound if none.
@@ -128,9 +107,7 @@ func (s *Store) Get(ctx context.Context, tenantID, name string) (*workflow.Spec,
 	err := s.pool.QueryRow(ctx,
 		`SELECT spec, version, status
 		   FROM bunshin_workflows
-		  WHERE tenant_id = $1 AND name = $2
-		    AND status = 'active' AND deleted_at IS NULL
-		  ORDER BY id DESC
+		  WHERE tenant_id = $1 AND name = $2 AND status = 'active' AND deleted_at IS NULL
 		  LIMIT 1`,
 		tenantID, name,
 	).Scan(&raw, &version, &status)
@@ -190,22 +167,9 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]string, error) {
 
 // ListVersions returns all version strings for name in insertion order (oldest first).
 func (s *Store) ListVersions(ctx context.Context, tenantID, name string) ([]string, error) {
-	// Verify the workflow exists (not deleted) before listing.
-	var exists bool
-	err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(
-		    SELECT 1 FROM bunshin_workflows
-		     WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL
-		 )`,
-		tenantID, name,
-	).Scan(&exists)
-	if err != nil {
-		return nil, fmt.Errorf("workflow/postgres: ListVersions check: %w", err)
+	if _, err := s.findName(ctx, tenantID, name); err != nil {
+		return nil, err
 	}
-	if !exists {
-		return nil, fmt.Errorf("workflow %q: %w", name, workflow.ErrNotFound)
-	}
-
 	rows, err := s.pool.Query(ctx,
 		`SELECT version
 		   FROM bunshin_workflows
@@ -229,36 +193,36 @@ func (s *Store) ListVersions(ctx context.Context, tenantID, name string) ([]stri
 	return vers, rows.Err()
 }
 
-// Activate promotes version to active using a serialisable transaction with
-// row-level locking to prevent concurrent double-activation.
-// Returns ErrVersionConflict if version is not found or is soft-deleted.
+// Activate promotes version to active using an optimistic-lock transaction.
+// Returns ErrVersionConflict if version is not found.
 func (s *Store) Activate(ctx context.Context, tenantID, name, version string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("workflow/postgres: Activate begin: %w", err)
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck
+	defer tx.Rollback(ctx) //nolint:errcheck
 
-	// Lock and verify the target version exists and is not soft-deleted.
-	var id int64
+	// Verify the target version exists.
+	var exists bool
 	err = tx.QueryRow(ctx,
-		`SELECT id FROM bunshin_workflows
-		  WHERE tenant_id = $1 AND name = $2 AND version = $3 AND deleted_at IS NULL
-		 FOR UPDATE`,
+		`SELECT EXISTS(
+		    SELECT 1 FROM bunshin_workflows
+		     WHERE tenant_id = $1 AND name = $2 AND version = $3
+		 )`,
 		tenantID, name, version,
-	).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("workflow/postgres: Activate check: %w", err)
+	}
+	if !exists {
 		return fmt.Errorf("workflow %q version %q: %w", name, version, workflow.ErrVersionConflict)
 	}
-	if err != nil {
-		return fmt.Errorf("workflow/postgres: Activate lock: %w", err)
-	}
 
-	// Demote any existing active version to draft.
+	// Demote existing active version to draft.
 	_, err = tx.Exec(ctx,
 		`UPDATE bunshin_workflows
 		    SET status = 'draft'
-		  WHERE tenant_id = $1 AND name = $2 AND status = 'active' AND deleted_at IS NULL`,
+		  WHERE tenant_id = $1 AND name = $2 AND status = 'active'`,
 		tenantID, name,
 	)
 	if err != nil {
@@ -269,8 +233,8 @@ func (s *Store) Activate(ctx context.Context, tenantID, name, version string) er
 	_, err = tx.Exec(ctx,
 		`UPDATE bunshin_workflows
 		    SET status = 'active'
-		  WHERE id = $1`,
-		id,
+		  WHERE tenant_id = $1 AND name = $2 AND version = $3`,
+		tenantID, name, version,
 	)
 	if err != nil {
 		return fmt.Errorf("workflow/postgres: Activate promote: %w", err)
@@ -278,22 +242,37 @@ func (s *Store) Activate(ctx context.Context, tenantID, name, version string) er
 	return tx.Commit(ctx)
 }
 
-// Delete soft-deletes all versions of the workflow. Get returns ErrNotFound afterwards.
-// Returns ErrNotFound if the workflow doesn't exist or is already deleted.
+// Delete soft-deletes the workflow. Get returns ErrNotFound afterwards.
 func (s *Store) Delete(ctx context.Context, tenantID, name string) error {
-	tag, err := s.pool.Exec(ctx,
+	if _, err := s.findName(ctx, tenantID, name); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx,
 		`UPDATE bunshin_workflows
 		    SET deleted_at = NOW(), status = 'draft'
 		  WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL`,
 		tenantID, name,
 	)
+	return err
+}
+
+// findName checks whether a non-deleted workflow named name exists.
+func (s *Store) findName(ctx context.Context, tenantID, name string) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(
+		    SELECT 1 FROM bunshin_workflows
+		     WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL
+		 )`,
+		tenantID, name,
+	).Scan(&exists)
 	if err != nil {
-		return fmt.Errorf("workflow/postgres: Delete: %w", err)
+		return false, fmt.Errorf("workflow/postgres: findName: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("workflow %q: %w", name, workflow.ErrNotFound)
+	if !exists {
+		return false, fmt.Errorf("workflow %q: %w", name, workflow.ErrNotFound)
 	}
-	return nil
+	return true, nil
 }
 
 // unmarshalSpec decodes JSONB bytes and stamps version/status from the DB row.
