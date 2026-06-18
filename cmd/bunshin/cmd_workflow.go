@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -11,7 +12,7 @@ import (
 func newWorkflowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "workflow",
-		Short: "Manage and run registered workflows (Graph and Chain)",
+		Short: "Manage and run YAML-defined workflows",
 	}
 	cmd.PersistentFlags().String("server", "http://localhost:8080", "bunshin server address")
 	_ = viper.BindPFlag("server", cmd.PersistentFlags().Lookup("server"))
@@ -19,8 +20,9 @@ func newWorkflowCmd() *cobra.Command {
 	cmd.AddCommand(
 		newWorkflowListCmd(),
 		newWorkflowShowCmd(),
+		newWorkflowVersionsCmd(),
 		newWorkflowCreateCmd(),
-		newWorkflowUpdateCmd(),
+		newWorkflowActivateCmd(),
 		newWorkflowDeleteCmd(),
 		newWorkflowRunCmd(),
 	)
@@ -30,9 +32,15 @@ func newWorkflowCmd() *cobra.Command {
 func newWorkflowListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List registered workflows",
+		Short: "List workflow names (GET /v1/workflows)",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println("workflow list: not yet implemented — use bunshin serve + GET /v1/workflows")
+			client := newServerClient(viper.GetString("server"))
+			var result map[string]any
+			if err := client.getJSON("/v1/workflows", &result); err != nil {
+				return err
+			}
+			out, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(out))
 			return nil
 		},
 	}
@@ -40,34 +48,90 @@ func newWorkflowListCmd() *cobra.Command {
 
 func newWorkflowShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <id>",
-		Short: "Show workflow definition",
+		Use:   "show <name>",
+		Short: "Show active workflow spec (GET /v1/workflows/{name})",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			fmt.Printf("workflow show %q: not yet implemented\n", args[0])
+			client := newServerClient(viper.GetString("server"))
+			var result any
+			if err := client.getJSON("/v1/workflows/"+args[0], &result); err != nil {
+				return err
+			}
+			out, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		},
+	}
+}
+
+func newWorkflowVersionsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "versions <name>",
+		Short: "List all versions of a workflow (GET /v1/workflows/{name}/versions)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			client := newServerClient(viper.GetString("server"))
+			var result any
+			if err := client.getJSON("/v1/workflows/"+args[0]+"/versions", &result); err != nil {
+				return err
+			}
+			out, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(out))
 			return nil
 		},
 	}
 }
 
 func newWorkflowCreateCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Register a new workflow",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println("workflow create: not yet implemented")
+		Short: "Create a new workflow draft from a YAML file or stdin",
+		Example: `  bunshin workflow create --file my-workflow.yaml
+  cat my-workflow.yaml | bunshin workflow create`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			filePath, _ := cmd.Flags().GetString("file")
+			var specBytes []byte
+			if filePath != "" {
+				var err error
+				specBytes, err = os.ReadFile(filePath)
+				if err != nil {
+					return fmt.Errorf("read file: %w", err)
+				}
+			} else {
+				var err error
+				specBytes, err = os.ReadFile("/dev/stdin")
+				if err != nil {
+					return fmt.Errorf("read stdin: %w", err)
+				}
+			}
+
+			client := newServerClient(viper.GetString("server"))
+			body := map[string]string{"spec": string(specBytes)}
+			var result map[string]string
+			if err := client.postJSON("/v1/workflows", body, &result); err != nil {
+				return err
+			}
+			out, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(out))
 			return nil
 		},
 	}
+	cmd.Flags().String("file", "", "Path to YAML workflow spec file (reads stdin when omitted)")
+	return cmd
 }
 
-func newWorkflowUpdateCmd() *cobra.Command {
+func newWorkflowActivateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "update <id>",
-		Short: "Update workflow configuration",
-		Args:  cobra.ExactArgs(1),
+		Use:   "activate <name> <version>",
+		Short: "Promote a version to active (POST /v1/workflows/{name}/activate)",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			fmt.Printf("workflow update %q: not yet implemented\n", args[0])
+			client := newServerClient(viper.GetString("server"))
+			body := map[string]string{"version": args[1]}
+			if err := client.postJSON("/v1/workflows/"+args[0]+"/activate", body, nil); err != nil {
+				return err
+			}
+			fmt.Printf("workflow %q version %q activated\n", args[0], args[1])
 			return nil
 		},
 	}
@@ -75,11 +139,15 @@ func newWorkflowUpdateCmd() *cobra.Command {
 
 func newWorkflowDeleteCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Soft delete a workflow",
+		Use:   "delete <name>",
+		Short: "Soft-delete a workflow (DELETE /v1/workflows/{name})",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			fmt.Printf("workflow delete %q: not yet implemented\n", args[0])
+			client := newServerClient(viper.GetString("server"))
+			if err := client.deleteHTTP("/v1/workflows/" + args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("workflow %q deleted\n", args[0])
 			return nil
 		},
 	}
@@ -87,18 +155,14 @@ func newWorkflowDeleteCmd() *cobra.Command {
 
 func newWorkflowRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "run <id>",
-		Short: "Run a workflow with JSON input via the bunshin HTTP server",
-		Example: `  # Run workflow "chat" with a JSON payload
-  bunshin workflow run chat --input '{"message":"hello"}'
-
-  # Against a remote server
-  bunshin workflow run chat --server http://prod.example.com:8080 --input '{}'`,
+		Use:   "run <name>",
+		Short: "Run a workflow via the bunshin HTTP server",
+		Example: `  bunshin workflow run my-flow --input '{"msg":"hello"}'
+  bunshin workflow run my-flow --server http://prod:8080 --input '{}'`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
+			name := args[0]
 			inputStr, _ := cmd.Flags().GetString("input")
-			server := viper.GetString("server")
 
 			var inputBody any = map[string]any{}
 			if inputStr != "" {
@@ -107,9 +171,9 @@ func newWorkflowRunCmd() *cobra.Command {
 				}
 			}
 
-			client := newServerClient(server)
+			client := newServerClient(viper.GetString("server"))
 			var result any
-			if err := client.postJSON("/v1/workflows/"+id, inputBody, &result); err != nil {
+			if err := client.postJSON("/v1/workflows/"+name+"/invoke", inputBody, &result); err != nil {
 				return err
 			}
 

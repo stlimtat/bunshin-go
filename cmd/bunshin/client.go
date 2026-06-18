@@ -63,3 +63,21 @@ func (c *serverClient) getJSON(path string, out any) error {
 	}
 	return nil
 }
+
+// deleteHTTP sends a DELETE request to path. Returns an error for 4xx/5xx.
+func (c *serverClient) deleteHTTP(path string) error {
+	req, err := http.NewRequest(http.MethodDelete, c.baseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("DELETE %s: build request: %w", path, err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("DELETE %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("DELETE %s: %s: %s", path, resp.Status, b)
+	}
+	return nil
+}
