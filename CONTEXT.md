@@ -149,16 +149,16 @@ _Avoid_: Supervisor (acceptable but implies hierarchy; orchestrator is more prec
 ### Prompt
 
 **Fragment**:
-A named, reusable `text/template` partial stored in a `TemplateStore`. Composed into a `PromptTemplate` via Go's `{{template "name" .}}` directive. Fragments are the unit of versioning — each has a `draft`→`active` lifecycle. Roll-forward only: fixing a bad fragment means activating a new version, not rolling back.
-_Avoid_: Partial, snippet, include
+A named, reusable `text/template` partial stored in a `PromptBackend`. Has two identifiers: `ID` (UUID, immutable — survives slug renames; UUIDv4 for PostgresStore, UUIDv5 slug-derived for file-backed stores) and `Slug` (human-readable, tenant-unique, mutable — e.g. `"investigation-report-fragment"`, `"analysis"`). Runtime template resolution uses `Slug`; YAML workflow nodes write `prompt: investigation-report-fragment`. HTTP management operations (`DELETE`, rename, activate) use UUID for stability. Renaming a slug invalidates YAML files referencing the old slug. Each (tenant, slug) has a `draft`→`active` lifecycle. Roll-forward only.
+_Avoid_: Partial, snippet, include; do not conflate `ID` (UUID) with `Slug` (human name); do not use UUID in YAML `prompt:` references
 
 **PromptTemplate**:
 A `text/template` that composes one or more `Fragment`s into a complete prompt. Rendered at invocation time with a data struct. Output is a `[]llm.Message` ready for an `LLMProvider`.
 _Avoid_: Template (too generic), prompt string
 
-**TemplateStore**:
-Interface: `Get(ctx, tenantID, name string) (string, error)` and `List(ctx, tenantID string) ([]string, error)`. Backends: `EmbedStore` (embed.FS, compiled in), `FSStore` (os.DirFS, hot-reload), `PostgresStore` (versioned, promotable). Source of truth is always Postgres in production.
-_Avoid_: PromptStore, template backend
+**PromptBackend**:
+Interface for storing and retrieving `Fragment`s. All methods take explicit `tenantID` — one instance serves all tenants (mirrors `workflow.Store`). Key methods: `Put(ctx, tenantID, *Fragment)`, `Get(ctx, tenantID, slug)` (runtime resolution by slug), `GetByID(ctx, tenantID, uuid)` (management plane), `GetVersion(ctx, tenantID, slug, version)`, `List(ctx, tenantID, tags...)`, `Rename(ctx, tenantID, uuid, newSlug)`, `Watch(ctx, tenantID, slug)`. Backends: `MemoryBackend` (tests), `EmbedStore` (embed.FS, read-only), `FSStore` (os.DirFS, hot-reload, read-only for writes), `PostgresStore` (versioned, promotable, source of truth in production). `Rename` and `Promote` return `ErrNotSupported` on read-only backends.
+_Avoid_: TemplateStore (old name), PromptStore, template backend
 
 **PromptCache**:
 Two-level runtime cache. Redis layer: shared across the cluster, holds raw template strings keyed `{tenant_id}:prompt:{name}`. In-process layer: compiled `*template.Template` per `(tenant_id, name, version)`, held in an `atomic.Pointer[templateSnapshot]`. Background poll (default 5s) detects Redis version pointer changes and invalidates the in-process layer. Manual refresh via `POST /v1/prompts/refresh` or `bunshin prompt refresh` forces one node to re-fetch from Postgres into Redis; cluster converges within one poll cycle.
