@@ -25,6 +25,8 @@ type Registries struct {
 	Prompts prompt.PromptBackend
 	// Routers resolves EIP router factories by type name.
 	Routers *RouterRegistry
+	// TenantID is passed to Prompts.Get when resolving fragment templates.
+	TenantID string
 }
 
 // Compile translates a Spec into a core.Runnable backed by a graph.Graph.
@@ -125,7 +127,7 @@ func buildLLMRunnable(ctx context.Context, ns NodeSpec, regs Registries) (core.T
 		if regs.Prompts == nil {
 			return nil, fmt.Errorf("llm node: prompt %q specified but no Prompts registry", ref.Prompt)
 		}
-		frag, err := regs.Prompts.Get(ctx, ref.Prompt)
+		frag, err := regs.Prompts.Get(ctx, regs.TenantID, ref.Prompt)
 		if err != nil {
 			return nil, fmt.Errorf("llm node: prompt fragment %q: %w", ref.Prompt, err)
 		}

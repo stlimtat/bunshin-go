@@ -494,7 +494,9 @@ func TestCompile_LLMNode_WithPrompt(t *testing.T) {
 	reg.Register(llm.ProviderFake, fake, llm.Tags{"tier": "fast"})
 
 	backend := prompt.NewMemoryBackend()
-	backend.Put(&prompt.Fragment{ID: "greet.v1", Content: "Hello {{.name}}"})
+	if err := backend.Put(context.Background(), "test", &prompt.Fragment{ID: "greet.v1", Slug: "greet.v1", Content: "Hello {{.name}}"}); err != nil {
+		t.Fatal(err)
+	}
 
 	yaml := `
 name: llm-flow
@@ -510,7 +512,7 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := workflow.Compile(spec, workflow.Registries{LLM: reg, Prompts: backend})
+	r, err := workflow.Compile(spec, workflow.Registries{LLM: reg, Prompts: backend, TenantID: "test"})
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
