@@ -11,14 +11,14 @@ import (
 
 // PromptComposer assembles PromptTemplates into rendered strings.
 type PromptComposer struct {
-	backend PromptBackend
-	engine  TemplateEngine
+	backend  PromptBackend
+	tenantID string
+	engine   TemplateEngine
 }
 
-// NewPromptComposer constructs a PromptComposer backed by backend.
-// Uses GoTemplateEngine by default.
-func NewPromptComposer(backend PromptBackend) *PromptComposer {
-	return &PromptComposer{backend: backend, engine: &GoTemplateEngine{}}
+// NewPromptComposer constructs a PromptComposer backed by backend for tenantID.
+func NewPromptComposer(backend PromptBackend, tenantID string) *PromptComposer {
+	return &PromptComposer{backend: backend, tenantID: tenantID, engine: &GoTemplateEngine{}}
 }
 
 // WithEngine replaces the default GoTemplateEngine.
@@ -27,23 +27,20 @@ func (c *PromptComposer) WithEngine(e TemplateEngine) *PromptComposer {
 	return c
 }
 
-// fragWork holds one resolved fragment ready for rendering.
 type fragWork struct {
-	frag   *Fragment
-	merged map[string]any
-	refID  string
+	frag    *Fragment
+	merged  map[string]any
+	refSlug string
 }
 
 // Render assembles and renders a PromptTemplate with the given variables.
-// Conditions are evaluated sequentially; qualifying fragments are fetched in
-// parallel, then rendered in original order.
 func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[string]any) (string, error) {
 	sep := t.Separator
 	if sep == "" {
 		sep = "\n\n"
 	}
 
-	// Phase 1: evaluate conditions sequentially to determine which fragments to fetch.
+	// Phase 1: evaluate conditions to determine qualifying fragments.
 	type pendingFetch struct {
 		idx    int
 		ref    FragmentRef
@@ -54,7 +51,7 @@ func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[
 		if ref.Condition != "" {
 			result, err := c.engine.RenderLenient(ref.Condition, vars)
 			if err != nil {
-				return "", fmt.Errorf("fragment %q condition: %w", ref.ID, err)
+				return "", fmt.Errorf("fragment %q condition: %w", ref.Slug, err)
 			}
 			if strings.TrimSpace(result) == "" || strings.TrimSpace(result) == "false" {
 				continue
@@ -75,22 +72,22 @@ func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[
 		return "", nil
 	}
 
-	// Phase 2: fetch all qualifying fragments concurrently.
+	// Phase 2: fetch qualifying fragments concurrently by slug.
 	work := make([]fragWork, len(pending))
 	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
 	for i, p := range pending {
 		i, p := i, p
 		g.Go(func() error {
-			frag, err := c.backend.Get(gctx, p.ref.ID)
+			frag, err := c.backend.Get(gctx, c.tenantID, p.ref.Slug)
 			if err != nil {
-				return fmt.Errorf("fragment %q: %w", p.ref.ID, err)
+				return fmt.Errorf("fragment %q: %w", p.ref.Slug, err)
 			}
 			if err := frag.Validate(p.merged); err != nil {
 				return err
 			}
 			mu.Lock()
-			work[i] = fragWork{frag: frag, merged: p.merged, refID: p.ref.ID}
+			work[i] = fragWork{frag: frag, merged: p.merged, refSlug: p.ref.Slug}
 			mu.Unlock()
 			return nil
 		})
@@ -99,12 +96,12 @@ func (c *PromptComposer) Render(ctx context.Context, t PromptTemplate, vars map[
 		return "", err
 	}
 
-	// Phase 3: render fragments in original order (engine may not be goroutine-safe).
+	// Phase 3: render in original order.
 	parts := make([]string, 0, len(work))
 	for _, w := range work {
 		rendered, err := c.engine.Render(w.frag.Content, w.merged)
 		if err != nil {
-			return "", fmt.Errorf("fragment %q render: %w", w.refID, err)
+			return "", fmt.Errorf("fragment %q render: %w", w.refSlug, err)
 		}
 		parts = append(parts, rendered)
 	}

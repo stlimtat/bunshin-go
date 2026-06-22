@@ -3,6 +3,7 @@ package prompt_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,12 +39,12 @@ func TestEmbedStore_GetAndList(t *testing.T) {
 		"prompts/ignore.txt": {Data: []byte("not a fragment")},
 	}
 
-	store, err := prompt.NewEmbedStore(fsys, "prompts")
+	store, err := prompt.NewEmbedStore(fsys, "prompts", testTenant)
 	if err != nil {
 		t.Fatalf("NewEmbedStore: %v", err)
 	}
 
-	f, err := store.Get(context.Background(), "greet")
+	f, err := store.Get(context.Background(), testTenant, "greet")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -51,24 +52,24 @@ func TestEmbedStore_GetAndList(t *testing.T) {
 		t.Fatalf("wrong content: %q", f.Content)
 	}
 
-	all, _ := store.List(context.Background())
+	all, _ := store.List(context.Background(), testTenant)
 	if len(all) != 2 {
 		t.Fatalf("want 2 fragments, got %d", len(all))
 	}
 
-	sys, _ := store.List(context.Background(), "system")
-	if len(sys) != 1 || sys[0].ID != "greet" {
+	sys, _ := store.List(context.Background(), testTenant, "system")
+	if len(sys) != 1 || sys[0].Slug != "greet" {
 		t.Fatalf("tag filter failed: %v", sys)
 	}
 }
 
 func TestEmbedStore_WatchIsClosed(t *testing.T) {
 	fsys := fstest.MapFS{}
-	store, err := prompt.NewEmbedStore(fsys, ".")
+	store, err := prompt.NewEmbedStore(fsys, ".", testTenant)
 	if err != nil {
 		t.Fatalf("NewEmbedStore: %v", err)
 	}
-	ch, err := store.Watch(context.Background(), "any")
+	ch, err := store.Watch(context.Background(), testTenant, "any")
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -100,13 +101,13 @@ func TestFSStore_LoadsExistingFiles(t *testing.T) {
 	writeFragmentFile(t, dir, &prompt.Fragment{ID: "a", Content: "alpha", Tags: []string{"x"}})
 	writeFragmentFile(t, dir, &prompt.Fragment{ID: "b", Content: "beta", Tags: []string{"y"}})
 
-	store, err := prompt.NewFSStore(dir)
+	store, err := prompt.NewFSStore(dir, testTenant)
 	if err != nil {
 		t.Fatalf("NewFSStore: %v", err)
 	}
 	defer store.Close()
 
-	f, err := store.Get(context.Background(), "a")
+	f, err := store.Get(context.Background(), testTenant, "a")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestFSStore_LoadsExistingFiles(t *testing.T) {
 		t.Fatalf("wrong content: %q", f.Content)
 	}
 
-	all, _ := store.List(context.Background())
+	all, _ := store.List(context.Background(), testTenant)
 	if len(all) != 2 {
 		t.Fatalf("want 2 fragments, got %d", len(all))
 	}
@@ -124,7 +125,7 @@ func TestFSStore_HotReload(t *testing.T) {
 	dir := t.TempDir()
 	writeFragmentFile(t, dir, &prompt.Fragment{ID: "live", Content: "v1"})
 
-	store, err := prompt.NewFSStore(dir)
+	store, err := prompt.NewFSStore(dir, testTenant)
 	if err != nil {
 		t.Fatalf("NewFSStore: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestFSStore_HotReload(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	ch, err := store.Watch(ctx, "live")
+	ch, err := store.Watch(ctx, testTenant, "live")
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -148,5 +149,131 @@ func TestFSStore_HotReload(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for hot reload")
+	}
+}
+
+// ---- EmbedStore ErrNotSupported ----
+
+func TestEmbedStore_ReadOnly(t *testing.T) {
+	fsys := fstest.MapFS{
+		"prompts/greet.json": {
+			Data: jsonFragment(&prompt.Fragment{Content: "hello"}),
+		},
+	}
+	store, err := prompt.NewEmbedStore(fsys, "prompts", testTenant)
+	if err != nil {
+		t.Fatalf("NewEmbedStore: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		fn   func() error
+	}{
+		{
+			name: "Put returns ErrNotSupported",
+			fn:   func() error { return store.Put(context.Background(), testTenant, &prompt.Fragment{Slug: "x"}) },
+		},
+		{
+			name: "Rename returns ErrNotSupported",
+			fn:   func() error { return store.Rename(context.Background(), testTenant, "some-id", "new-slug") },
+		},
+		{
+			name: "Promote returns ErrNotSupported",
+			fn:   func() error { return store.Promote(context.Background(), testTenant, "some-id") },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.fn(); !errors.Is(err, prompt.ErrNotSupported) {
+				t.Errorf("want ErrNotSupported, got %v", err)
+			}
+		})
+	}
+}
+
+func TestEmbedStore_GetByID(t *testing.T) {
+	fsys := fstest.MapFS{
+		"prompts/hero.json": {
+			Data: jsonFragment(&prompt.Fragment{Content: "hero content"}),
+		},
+	}
+	store, err := prompt.NewEmbedStore(fsys, "prompts", testTenant)
+	if err != nil {
+		t.Fatalf("NewEmbedStore: %v", err)
+	}
+
+	// Resolve the UUID via Get first.
+	f, err := store.Get(context.Background(), testTenant, "hero")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	got, err := store.GetByID(context.Background(), testTenant, f.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Slug != "hero" {
+		t.Errorf("want slug=hero, got %q", got.Slug)
+	}
+}
+
+// ---- FSStore ErrNotSupported ----
+
+func TestFSStore_ReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	writeFragmentFile(t, dir, &prompt.Fragment{ID: "r", Content: "read-only"})
+
+	store, err := prompt.NewFSStore(dir, testTenant)
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	defer store.Close()
+
+	tests := []struct {
+		name string
+		fn   func() error
+	}{
+		{
+			name: "Put returns ErrNotSupported",
+			fn:   func() error { return store.Put(context.Background(), testTenant, &prompt.Fragment{Slug: "x"}) },
+		},
+		{
+			name: "Rename returns ErrNotSupported",
+			fn:   func() error { return store.Rename(context.Background(), testTenant, "some-id", "new-slug") },
+		},
+		{
+			name: "Promote returns ErrNotSupported",
+			fn:   func() error { return store.Promote(context.Background(), testTenant, "some-id") },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.fn(); !errors.Is(err, prompt.ErrNotSupported) {
+				t.Errorf("want ErrNotSupported, got %v", err)
+			}
+		})
+	}
+}
+
+func TestFSStore_GetByID(t *testing.T) {
+	dir := t.TempDir()
+	writeFragmentFile(t, dir, &prompt.Fragment{ID: "byid", Content: "by id content"})
+
+	store, err := prompt.NewFSStore(dir, testTenant)
+	if err != nil {
+		t.Fatalf("NewFSStore: %v", err)
+	}
+	defer store.Close()
+
+	// Resolve the UUID via Get first.
+	f, err := store.Get(context.Background(), testTenant, "byid")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	got, err := store.GetByID(context.Background(), testTenant, f.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Slug != "byid" {
+		t.Errorf("want slug=byid, got %q", got.Slug)
 	}
 }

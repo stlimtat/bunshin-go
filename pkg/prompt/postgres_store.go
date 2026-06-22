@@ -3,98 +3,172 @@ package prompt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PostgresStore is a PromptBackend backed by PostgreSQL with roll-forward versioning.
+// One instance serves all tenants — tenantID is passed per call.
 //
-// Each fragment has a status: "draft" or "active". Promote transitions the latest
-// draft to active for that fragment ID. This is the only allowed state transition
-// (roll-forward only — no rollback).
-//
-// Schema (create once per database):
+// Schema migration:
 //
 //	CREATE TABLE IF NOT EXISTS bunshin_fragments (
-//	    id          BIGSERIAL PRIMARY KEY,
-//	    fragment_id TEXT   NOT NULL,
-//	    tenant_id   TEXT   NOT NULL,
-//	    version     TEXT   NOT NULL,
-//	    status      TEXT   NOT NULL DEFAULT 'draft',
-//	    content     JSONB  NOT NULL,
-//	    created_at  TIMESTAMPTZ DEFAULT NOW()
+//	    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+//	    slug        TEXT         NOT NULL,
+//	    tenant_id   TEXT         NOT NULL,
+//	    version     TEXT         NOT NULL,
+//	    status      TEXT         NOT NULL DEFAULT 'draft',
+//	    content     JSONB        NOT NULL,
+//	    created_at  TIMESTAMPTZ  DEFAULT NOW(),
+//	    UNIQUE (tenant_id, slug, version)
 //	);
 //	CREATE UNIQUE INDEX IF NOT EXISTS bunshin_fragments_active
-//	    ON bunshin_fragments (tenant_id, fragment_id)
+//	    ON bunshin_fragments (tenant_id, slug)
 //	    WHERE status = 'active';
-//	CREATE INDEX IF NOT EXISTS bunshin_fragments_lookup
-//	    ON bunshin_fragments (tenant_id, fragment_id, version);
+//	CREATE INDEX IF NOT EXISTS bunshin_fragments_by_uuid
+//	    ON bunshin_fragments (id);
 type PostgresStore struct {
-	pool     *pgxpool.Pool
-	tenantID string
+	pool *pgxpool.Pool
 }
 
-// NewPostgresStore constructs a store scoped to a tenant.
-func NewPostgresStore(pool *pgxpool.Pool, tenantID string) *PostgresStore {
-	return &PostgresStore{pool: pool, tenantID: tenantID}
+// NewPostgresStore constructs a store backed by pool.
+// Call Migrate to apply the schema.
+func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
+	return &PostgresStore{pool: pool}
 }
 
-const pgFragInsert = `
-INSERT INTO bunshin_fragments (fragment_id, tenant_id, version, status, content)
-VALUES ($1, $2, $3, 'draft', $4)`
+const pgFragSchema = `
+CREATE TABLE IF NOT EXISTS bunshin_fragments (
+    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug        TEXT         NOT NULL,
+    tenant_id   TEXT         NOT NULL,
+    version     TEXT         NOT NULL,
+    status      TEXT         NOT NULL DEFAULT 'draft',
+    content     JSONB        NOT NULL,
+    created_at  TIMESTAMPTZ  DEFAULT NOW(),
+    UNIQUE (tenant_id, slug, version)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS bunshin_fragments_active
+    ON bunshin_fragments (tenant_id, slug)
+    WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS bunshin_fragments_by_uuid
+    ON bunshin_fragments (id);
+`
 
-// Put saves a fragment as a new draft. Does not affect the active version.
-func (s *PostgresStore) Put(ctx context.Context, f *Fragment) error {
+// Migrate applies the schema idempotently.
+func (s *PostgresStore) Migrate(ctx context.Context) error {
+	if _, err := s.pool.Exec(ctx, pgFragSchema); err != nil {
+		return fmt.Errorf("postgres store: migrate: %w", err)
+	}
+	return nil
+}
+
+// Put saves a fragment as a new draft. Generates a UUIDv4 if f.ID is empty.
+func (s *PostgresStore) Put(ctx context.Context, tenantID string, f *Fragment) error {
+	if f.Slug == "" {
+		return fmt.Errorf("postgres store: Put: fragment Slug must not be empty")
+	}
+	if f.ID == "" {
+		f.ID = uuid.New().String()
+	}
 	data, err := json.Marshal(f)
 	if err != nil {
 		return fmt.Errorf("postgres store: marshal: %w", err)
 	}
-	_, err = s.pool.Exec(ctx, pgFragInsert, f.ID, s.tenantID, f.Version, data)
+	_, err = s.pool.Exec(ctx,
+		`INSERT INTO bunshin_fragments (id, slug, tenant_id, version, status, content)
+		 VALUES ($1, $2, $3, $4, 'draft', $5)
+		 ON CONFLICT (tenant_id, slug, version) DO NOTHING`,
+		f.ID, f.Slug, tenantID, f.Version, data,
+	)
 	if err != nil {
 		return fmt.Errorf("postgres store: put: %w", err)
 	}
 	return nil
 }
 
-const pgFragGetActive = `
-SELECT content FROM bunshin_fragments
-WHERE tenant_id = $1 AND fragment_id = $2 AND status = 'active'
-LIMIT 1`
-
-// Get returns the active version of a fragment.
-func (s *PostgresStore) Get(ctx context.Context, id string) (*Fragment, error) {
+// Get returns the active version by slug.
+func (s *PostgresStore) Get(ctx context.Context, tenantID, slug string) (*Fragment, error) {
 	var data []byte
-	err := s.pool.QueryRow(ctx, pgFragGetActive, s.tenantID, id).Scan(&data)
-	if err != nil {
-		return nil, fmt.Errorf("postgres store: get %q: %w", id, err)
+	var id string
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, content FROM bunshin_fragments
+		  WHERE tenant_id = $1 AND slug = $2 AND status = 'active'
+		  LIMIT 1`,
+		tenantID, slug,
+	).Scan(&id, &data)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("fragment slug=%q tenant=%q: not found", slug, tenantID)
 	}
-	return decodeFragment(data)
+	if err != nil {
+		return nil, fmt.Errorf("postgres store: get %q: %w", slug, err)
+	}
+	f, err := decodeFragment(data)
+	if err != nil {
+		return nil, err
+	}
+	f.ID = id
+	return f, nil
 }
 
-const pgFragGetVersion = `
-SELECT content FROM bunshin_fragments
-WHERE tenant_id = $1 AND fragment_id = $2 AND version = $3
-LIMIT 1`
-
-// GetVersion returns a specific version (any status).
-func (s *PostgresStore) GetVersion(ctx context.Context, id, version string) (*Fragment, error) {
+// GetByID returns a fragment by its UUID.
+func (s *PostgresStore) GetByID(ctx context.Context, _, id string) (*Fragment, error) {
 	var data []byte
-	err := s.pool.QueryRow(ctx, pgFragGetVersion, s.tenantID, id, version).Scan(&data)
-	if err != nil {
-		return nil, fmt.Errorf("postgres store: get version %q@%q: %w", id, version, err)
+	err := s.pool.QueryRow(ctx,
+		`SELECT content FROM bunshin_fragments
+		  WHERE id = $1
+		  LIMIT 1`,
+		id,
+	).Scan(&data)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("fragment id=%q: not found", id)
 	}
-	return decodeFragment(data)
+	if err != nil {
+		return nil, fmt.Errorf("postgres store: get by id %q: %w", id, err)
+	}
+	f, err := decodeFragment(data)
+	if err != nil {
+		return nil, err
+	}
+	f.ID = id
+	return f, nil
 }
 
-const pgFragList = `
-SELECT content FROM bunshin_fragments
-WHERE tenant_id = $1 AND status = 'active'`
+// GetVersion returns a specific version by slug.
+func (s *PostgresStore) GetVersion(ctx context.Context, tenantID, slug, version string) (*Fragment, error) {
+	var data []byte
+	var id string
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, content FROM bunshin_fragments
+		  WHERE tenant_id = $1 AND slug = $2 AND version = $3
+		  LIMIT 1`,
+		tenantID, slug, version,
+	).Scan(&id, &data)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("fragment slug=%q version=%q: not found", slug, version)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres store: get version %q@%q: %w", slug, version, err)
+	}
+	f, err := decodeFragment(data)
+	if err != nil {
+		return nil, err
+	}
+	f.ID = id
+	return f, nil
+}
 
-// List returns all active fragments for the tenant.
-// Tag filtering is applied in-process.
-func (s *PostgresStore) List(ctx context.Context, tags ...string) ([]*Fragment, error) {
-	rows, err := s.pool.Query(ctx, pgFragList, s.tenantID)
+// List returns all active fragments for tenantID. Tag filtering is in-process.
+func (s *PostgresStore) List(ctx context.Context, tenantID string, tags ...string) ([]*Fragment, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, content FROM bunshin_fragments
+		  WHERE tenant_id = $1 AND status = 'active'`,
+		tenantID,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres store: list: %w", err)
 	}
@@ -102,14 +176,16 @@ func (s *PostgresStore) List(ctx context.Context, tags ...string) ([]*Fragment, 
 
 	var out []*Fragment
 	for rows.Next() {
+		var id string
 		var data []byte
-		if err := rows.Scan(&data); err != nil {
+		if err := rows.Scan(&id, &data); err != nil {
 			return nil, fmt.Errorf("postgres store: scan: %w", err)
 		}
 		f, err := decodeFragment(data)
 		if err != nil {
 			return nil, err
 		}
+		f.ID = id
 		if len(tags) == 0 || hasAllTags(f, tags) {
 			out = append(out, f)
 		}
@@ -117,36 +193,91 @@ func (s *PostgresStore) List(ctx context.Context, tags ...string) ([]*Fragment, 
 	return out, rows.Err()
 }
 
-// Watch is not supported by PostgresStore — use PromptCache for live updates.
-// Returns a closed channel.
-func (s *PostgresStore) Watch(_ context.Context, _ string) (<-chan *Fragment, error) {
+// Rename changes the slug for all rows with the given UUID to newSlug.
+func (s *PostgresStore) Rename(ctx context.Context, _, id, newSlug string) error {
+	if newSlug == "" {
+		return fmt.Errorf("postgres store: Rename: newSlug must not be empty")
+	}
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE bunshin_fragments SET slug = $1 WHERE id = $2`,
+		newSlug, id,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres store: rename: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("fragment id=%q: not found", id)
+	}
+	return nil
+}
+
+// Watch is not supported — use PromptCache for live updates.
+func (s *PostgresStore) Watch(_ context.Context, _, _ string) (<-chan *Fragment, error) {
 	ch := make(chan *Fragment)
 	close(ch)
 	return ch, nil
 }
 
-const pgFragPromote = `
-UPDATE bunshin_fragments
-SET status = 'active'
-WHERE tenant_id = $1 AND fragment_id = $2
-  AND version = (
-      SELECT version FROM bunshin_fragments
-      WHERE tenant_id = $1 AND fragment_id = $2 AND status = 'draft'
-      ORDER BY created_at DESC
-      LIMIT 1
-  )`
-
-// Promote transitions the newest draft to active (roll-forward only).
-// Returns an error if no draft exists.
-func (s *PostgresStore) Promote(ctx context.Context, fragmentID string) error {
-	cmd, err := s.pool.Exec(ctx, pgFragPromote, s.tenantID, fragmentID)
+// Promote transitions the newest draft to active for the given slug or UUID.
+// ref may be a UUID (tries first) or a slug (fallback).
+func (s *PostgresStore) Promote(ctx context.Context, tenantID, ref string) error {
+	slug, err := s.resolveSlug(ctx, tenantID, ref)
 	if err != nil {
-		return fmt.Errorf("postgres store: promote %q: %w", fragmentID, err)
+		return err
 	}
-	if cmd.RowsAffected() == 0 {
-		return fmt.Errorf("postgres store: promote %q: no draft found", fragmentID)
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE bunshin_fragments
+		    SET status = 'active'
+		  WHERE tenant_id = $1 AND slug = $2
+		    AND version = (
+		        SELECT version FROM bunshin_fragments
+		         WHERE tenant_id = $1 AND slug = $2 AND status = 'draft'
+		         ORDER BY created_at DESC
+		         LIMIT 1
+		    )`,
+		tenantID, slug,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres store: promote %q: %w", ref, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("postgres store: promote %q: no draft found", ref)
 	}
 	return nil
+}
+
+// resolveSlug resolves ref to a slug: tries UUID parse first, then slug lookup.
+func (s *PostgresStore) resolveSlug(ctx context.Context, tenantID, ref string) (string, error) {
+	if _, err := uuid.Parse(ref); err == nil {
+		// ref is a UUID — look up the current slug.
+		var slug string
+		err := s.pool.QueryRow(ctx,
+			`SELECT slug FROM bunshin_fragments
+			  WHERE id = $1 AND tenant_id = $2
+			  LIMIT 1`,
+			ref, tenantID,
+		).Scan(&slug)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("fragment id=%q tenant=%q: not found", ref, tenantID)
+		}
+		if err != nil {
+			return "", fmt.Errorf("postgres store: resolve uuid %q: %w", ref, err)
+		}
+		return slug, nil
+	}
+	// ref is a slug — verify it exists.
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM bunshin_fragments WHERE tenant_id = $1 AND slug = $2)`,
+		tenantID, ref,
+	).Scan(&exists)
+	if err != nil {
+		return "", fmt.Errorf("postgres store: resolve slug %q: %w", ref, err)
+	}
+	if !exists {
+		return "", fmt.Errorf("fragment slug=%q tenant=%q: not found", ref, tenantID)
+	}
+	return ref, nil
 }
 
 func decodeFragment(data []byte) (*Fragment, error) {
