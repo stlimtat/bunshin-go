@@ -29,6 +29,9 @@ type Fragment struct {
 	Tags []string
 	// Version allows pinning to a specific revision.
 	Version string
+	// Status is the lifecycle state: "draft", "active", or "deleted".
+	// Empty on file-backed stores (EmbedStore, FSStore) which have no lifecycle.
+	Status string
 }
 
 // Validate returns an error if any declared variable is absent from vars.

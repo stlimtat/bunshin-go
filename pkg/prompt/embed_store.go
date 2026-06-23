@@ -82,6 +82,10 @@ func (s *EmbedStore) List(ctx context.Context, tenantID string, tags ...string) 
 	return s.mem.List(ctx, tenantID, tags...)
 }
 
+func (s *EmbedStore) ListVersions(_ context.Context, _, _ string) ([]*Fragment, error) {
+	return nil, ErrNotSupported
+}
+
 func (s *EmbedStore) Delete(_ context.Context, _, _ string) error {
 	return ErrNotSupported
 }

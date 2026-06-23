@@ -3,6 +3,7 @@ package prompt
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/google/uuid"
@@ -161,6 +162,25 @@ func (b *MemoryBackend) Rename(_ context.Context, tenantID, id, newSlug string) 
 }
 
 // Watch returns a channel that receives fragment updates for (tenantID, slug).
+func (b *MemoryBackend) ListVersions(_ context.Context, tenantID, slug string) ([]*Fragment, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	tm, ok := b.byVersion[tenantID]
+	if !ok {
+		return nil, fmt.Errorf("fragment slug=%q tenant=%q: not found", slug, tenantID)
+	}
+	sv, ok := tm[slug]
+	if !ok {
+		return nil, fmt.Errorf("fragment slug=%q tenant=%q: not found", slug, tenantID)
+	}
+	out := make([]*Fragment, 0, len(sv))
+	for _, f := range sv {
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Version > out[j].Version })
+	return out, nil
+}
+
 func (b *MemoryBackend) Delete(_ context.Context, tenantID, slug string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

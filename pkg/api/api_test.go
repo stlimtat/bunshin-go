@@ -507,3 +507,36 @@ func TestRouter_PromptGetVersion_OK(t *testing.T) {
 		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestRouter_PromptListVersions_OK(t *testing.T) {
+	backend := prompt.NewMemoryBackend()
+	_ = backend.Put(context.Background(), "default", &prompt.Fragment{Slug: "f", Version: "v1", Content: "old"})
+	_ = backend.Put(context.Background(), "default", &prompt.Fragment{Slug: "f", Version: "v2", Content: "new"})
+	router := api.NewRouter(
+		&fakeHandler{runnables: map[string]core.Runnable{}},
+		api.RouterConfig{PromptBackend: backend},
+	)
+	mux := http.NewServeMux()
+	router.Mount(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/prompts/f/versions", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	vers, ok := resp["versions"].([]any)
+	if !ok || len(vers) != 2 {
+		t.Errorf("expected 2 versions, got %v", resp["versions"])
+	}
+}
+
+func TestRouter_PromptListVersions_NotFound(t *testing.T) {
+	_, mux := promptRouter(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/prompts/nonexistent/versions", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}

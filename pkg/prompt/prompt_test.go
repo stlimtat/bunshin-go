@@ -184,6 +184,31 @@ func TestMemoryBackend_TenantIsolation(t *testing.T) {
 	}
 }
 
+func TestMemoryBackend_ListVersions(t *testing.T) {
+	b := prompt.NewMemoryBackend()
+	_ = b.Put(context.Background(), testTenant, &prompt.Fragment{Slug: "f", Version: "v1", Content: "old"})
+	_ = b.Put(context.Background(), testTenant, &prompt.Fragment{Slug: "f", Version: "v2", Content: "mid"})
+	_ = b.Put(context.Background(), testTenant, &prompt.Fragment{Slug: "f", Version: "v3", Content: "new"})
+
+	vers, err := b.ListVersions(context.Background(), testTenant, "f")
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(vers) != 3 {
+		t.Fatalf("want 3 versions, got %d", len(vers))
+	}
+	if vers[0].Version != "v3" {
+		t.Errorf("want newest-first (v3), got %q", vers[0].Version)
+	}
+}
+
+func TestMemoryBackend_ListVersions_NotFound(t *testing.T) {
+	b := prompt.NewMemoryBackend()
+	if _, err := b.ListVersions(context.Background(), testTenant, "nonexistent"); err == nil {
+		t.Error("expected error for missing slug")
+	}
+}
+
 func TestMemoryBackend_Delete(t *testing.T) {
 	b := prompt.NewMemoryBackend()
 	f := &prompt.Fragment{Slug: "to-delete", Content: "c"}

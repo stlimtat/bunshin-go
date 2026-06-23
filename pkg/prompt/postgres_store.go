@@ -211,6 +211,40 @@ func (s *PostgresStore) Rename(ctx context.Context, _, id, newSlug string) error
 	return nil
 }
 
+// ListVersions returns all versions of the fragment identified by slug, newest-first.
+func (s *PostgresStore) ListVersions(ctx context.Context, tenantID, slug string) ([]*Fragment, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, status, content FROM bunshin_fragments
+		  WHERE tenant_id = $1 AND slug = $2
+		  ORDER BY created_at DESC`,
+		tenantID, slug,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("postgres store: list versions %q: %w", slug, err)
+	}
+	defer rows.Close()
+
+	var out []*Fragment
+	for rows.Next() {
+		var id, status string
+		var data []byte
+		if err := rows.Scan(&id, &status, &data); err != nil {
+			return nil, fmt.Errorf("postgres store: scan version: %w", err)
+		}
+		f, err := decodeFragment(data)
+		if err != nil {
+			return nil, err
+		}
+		f.ID = id
+		f.Status = status
+		out = append(out, f)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("fragment slug=%q tenant=%q: not found", slug, tenantID)
+	}
+	return out, rows.Err()
+}
+
 // Delete tombstones all versions of the fragment identified by slug for tenantID.
 func (s *PostgresStore) Delete(ctx context.Context, tenantID, slug string) error {
 	tag, err := s.pool.Exec(ctx,

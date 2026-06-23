@@ -91,6 +91,11 @@ func (c *PromptCache) Put(ctx context.Context, tenantID string, f *Fragment) err
 	return c.writeToRedis(ctx, tenantID, f)
 }
 
+// ListVersions delegates to the underlying backend.
+func (c *PromptCache) ListVersions(ctx context.Context, tenantID, slug string) ([]*Fragment, error) {
+	return c.backend.ListVersions(ctx, tenantID, slug)
+}
+
 // Delete delegates to the underlying backend then triggers a cache refresh.
 func (c *PromptCache) Delete(ctx context.Context, tenantID, slug string) error {
 	if err := c.backend.Delete(ctx, tenantID, slug); err != nil {

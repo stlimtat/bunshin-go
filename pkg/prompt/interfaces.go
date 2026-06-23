@@ -59,6 +59,11 @@ type PromptBackend interface {
 	// Returns ErrNotSupported on read-only backends (EmbedStore, FSStore).
 	Rename(ctx context.Context, tenantID, id, newSlug string) error
 
+	// ListVersions returns all versions of the fragment identified by slug for
+	// tenantID, newest-first. Includes draft, active, and deleted versions.
+	// Returns ErrNotSupported on read-only backends (EmbedStore, FSStore).
+	ListVersions(ctx context.Context, tenantID, slug string) ([]*Fragment, error)
+
 	// Delete tombstones the fragment identified by slug for tenantID (all versions).
 	// Returns ErrNotSupported on read-only backends (EmbedStore, FSStore).
 	Delete(ctx context.Context, tenantID, slug string) error

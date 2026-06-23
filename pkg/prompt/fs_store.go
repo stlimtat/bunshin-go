@@ -149,6 +149,10 @@ func (s *FSStore) List(ctx context.Context, tenantID string, tags ...string) ([]
 	return s.mem.List(ctx, tenantID, tags...)
 }
 
+func (s *FSStore) ListVersions(_ context.Context, _, _ string) ([]*Fragment, error) {
+	return nil, ErrNotSupported
+}
+
 func (s *FSStore) Delete(_ context.Context, _, _ string) error {
 	return ErrNotSupported
 }

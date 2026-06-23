@@ -185,6 +185,10 @@ func TestEmbedStore_ReadOnly(t *testing.T) {
 			name: "Delete returns ErrNotSupported",
 			fn:   func() error { return store.Delete(context.Background(), testTenant, "greet") },
 		},
+		{
+			name: "ListVersions returns ErrNotSupported",
+			fn:   func() error { _, err := store.ListVersions(context.Background(), testTenant, "greet"); return err },
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -251,6 +255,10 @@ func TestFSStore_ReadOnly(t *testing.T) {
 		{
 			name: "Delete returns ErrNotSupported",
 			fn:   func() error { return store.Delete(context.Background(), testTenant, "r") },
+		},
+		{
+			name: "ListVersions returns ErrNotSupported",
+			fn:   func() error { _, err := store.ListVersions(context.Background(), testTenant, "r"); return err },
 		},
 	}
 	for _, tt := range tests {

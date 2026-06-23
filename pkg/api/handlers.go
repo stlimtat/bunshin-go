@@ -354,13 +354,31 @@ func (ro *Router) handlePromptGet(w http.ResponseWriter, r *http.Request) {
 		ro.getByID(w, r, tenantID, parts[1])
 	case len(parts) == 2 && parts[1] == "versions":
 		// GET /v1/prompts/{slug}/versions
-		http.Error(w, "list versions not yet implemented", http.StatusNotImplemented)
+		ro.listVersions(w, r, tenantID, parts[0])
 	case len(parts) == 3 && parts[1] == "versions":
 		// GET /v1/prompts/{slug}/versions/{ver}
 		ro.getVersion(w, r, tenantID, parts[0], parts[2])
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (ro *Router) listVersions(w http.ResponseWriter, r *http.Request, tenantID, slug string) {
+	frags, err := ro.promptBackend.ListVersions(r.Context(), tenantID, slug)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	type versionMeta struct {
+		Version string `json:"version"`
+		Status  string `json:"status"`
+	}
+	meta := make([]versionMeta, len(frags))
+	for i, f := range frags {
+		meta[i] = versionMeta{Version: f.Version, Status: f.Status}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"versions": meta})
 }
 
 func (ro *Router) getBySlug(w http.ResponseWriter, r *http.Request, tenantID, slug string) {
