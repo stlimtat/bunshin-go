@@ -59,6 +59,10 @@ type PromptBackend interface {
 	// Returns ErrNotSupported on read-only backends (EmbedStore, FSStore).
 	Rename(ctx context.Context, tenantID, id, newSlug string) error
 
+	// Delete tombstones the fragment identified by slug for tenantID (all versions).
+	// Returns ErrNotSupported on read-only backends (EmbedStore, FSStore).
+	Delete(ctx context.Context, tenantID, slug string) error
+
 	// Watch sends fragment updates to the returned channel when the (tenant, slug)
 	// pair changes. The channel is closed when ctx is cancelled.
 	Watch(ctx context.Context, tenantID, slug string) (<-chan *Fragment, error)

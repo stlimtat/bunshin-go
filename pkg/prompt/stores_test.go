@@ -181,6 +181,10 @@ func TestEmbedStore_ReadOnly(t *testing.T) {
 			name: "Promote returns ErrNotSupported",
 			fn:   func() error { return store.Promote(context.Background(), testTenant, "some-id") },
 		},
+		{
+			name: "Delete returns ErrNotSupported",
+			fn:   func() error { return store.Delete(context.Background(), testTenant, "greet") },
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -243,6 +247,10 @@ func TestFSStore_ReadOnly(t *testing.T) {
 		{
 			name: "Promote returns ErrNotSupported",
 			fn:   func() error { return store.Promote(context.Background(), testTenant, "some-id") },
+		},
+		{
+			name: "Delete returns ErrNotSupported",
+			fn:   func() error { return store.Delete(context.Background(), testTenant, "r") },
 		},
 	}
 	for _, tt := range tests {

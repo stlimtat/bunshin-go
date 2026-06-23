@@ -91,6 +91,15 @@ func (c *PromptCache) Put(ctx context.Context, tenantID string, f *Fragment) err
 	return c.writeToRedis(ctx, tenantID, f)
 }
 
+// Delete delegates to the underlying backend then triggers a cache refresh.
+func (c *PromptCache) Delete(ctx context.Context, tenantID, slug string) error {
+	if err := c.backend.Delete(ctx, tenantID, slug); err != nil {
+		return err
+	}
+	c.Refresh()
+	return nil
+}
+
 // Rename delegates to the underlying backend.
 func (c *PromptCache) Rename(ctx context.Context, tenantID, id, newSlug string) error {
 	return c.backend.Rename(ctx, tenantID, id, newSlug)

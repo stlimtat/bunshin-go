@@ -20,22 +20,25 @@
 //	GET    /v1/workflows/{name}/stream            — SSE streaming
 //	GET    /v1/threads                            — list conversation threads
 //	GET    /v1/threads/{id}/messages              — thread message history
-//	POST   /v1/prompts/{name}/activate            — activate a prompt version
-//	POST   /v1/prompts/refresh                    — force prompt cache refresh
+//	PUT    /v1/prompts/{slug}                     — upsert (create or update draft, optional rename)
+//	GET    /v1/prompts                            — list active fragments for tenant
+//	GET    /v1/prompts/{slug}                     — get active version by slug
+//	GET    /v1/prompts/id/{id}                    — get by immutable UUID
+//	GET    /v1/prompts/{slug}/versions            — list all versions, metadata only, newest-first
+//	GET    /v1/prompts/{slug}/versions/{ver}      — get specific version (any status)
+//	POST   /v1/prompts/{slug}/activate            — promote newest draft → active
+//	DELETE /v1/prompts/{slug}                     — soft delete + cache refresh
+//	POST   /v1/prompts/{slug}/purge               — hard delete (501 stub)
+//	POST   /v1/prompts/refresh                    — force in-process cache refresh
 package api
 
 import (
-	"context"
 	"net/http"
 
+	"github.com/stlimtat/bunshin-go/pkg/prompt"
 	"github.com/stlimtat/bunshin-go/pkg/transport"
 	"github.com/stlimtat/bunshin-go/pkg/workflow"
 )
-
-// PromptActivator promotes the newest draft of a named fragment to active.
-type PromptActivator interface {
-	Promote(ctx context.Context, name string) error
-}
 
 // PromptRefresher triggers an immediate pull from Redis into the in-process snapshot.
 type PromptRefresher interface {
@@ -45,8 +48,12 @@ type PromptRefresher interface {
 // RouterConfig holds optional backend integrations for the Router.
 // All fields are optional — unset fields result in 501 Not Implemented responses.
 type RouterConfig struct {
-	// Activator promotes prompt drafts to active.
-	Activator PromptActivator
+	// PromptBackend enables prompt CRUD endpoints.
+	// When nil, CRUD endpoints return 501 Not Implemented.
+	PromptBackend prompt.PromptBackend
+	// PromptActivator promotes prompt drafts to active.
+	// When nil, activate endpoint returns 501 Not Implemented.
+	PromptActivator prompt.PromptActivator
 	// Refresher triggers a prompt cache refresh.
 	Refresher PromptRefresher
 	// WorkflowStore enables workflow CRUD endpoints.
@@ -60,7 +67,8 @@ type RouterConfig struct {
 // Router mounts all /v1 routes onto mux.
 type Router struct {
 	handler          transport.WorkflowHandler
-	activator        PromptActivator
+	promptBackend    prompt.PromptBackend
+	promptActivator  prompt.PromptActivator
 	refresher        PromptRefresher
 	workflowStore    workflow.Store
 	workflowTenantID string
@@ -70,7 +78,8 @@ type Router struct {
 func NewRouter(handler transport.WorkflowHandler, cfg ...RouterConfig) *Router {
 	ro := &Router{handler: handler, workflowTenantID: "default"}
 	for _, c := range cfg {
-		ro.activator = c.Activator
+		ro.promptBackend = c.PromptBackend
+		ro.promptActivator = c.PromptActivator
 		ro.refresher = c.Refresher
 		ro.workflowStore = c.WorkflowStore
 		if c.WorkflowTenantID != "" {
@@ -91,7 +100,7 @@ func (ro *Router) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/workflows/{name}", ro.handleWorkflowDelete)
 	mux.HandleFunc("GET /v1/workflows/{name}", ro.handleWorkflowGet)
 
-	// Workflow execution (renamed from /{id} to /{name}/invoke and /{name}/stream).
+	// Workflow execution.
 	mux.HandleFunc("POST /v1/workflows/{name}/invoke", ro.handleWorkflowInvoke)
 	mux.HandleFunc("GET /v1/workflows/{name}/stream", ro.handleWorkflowStream)
 
@@ -100,6 +109,20 @@ func (ro *Router) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/threads/{id}/messages", ro.handleGetThreadMessages)
 
 	// Prompts.
-	mux.HandleFunc("POST /v1/prompts/{name}/activate", ro.handlePromptActivate)
+	// Note: GET /v1/prompts/id/{id} and GET /v1/prompts/{slug}/versions both match
+	// /v1/prompts/id/versions, which Go 1.22+ mux treats as a conflict. We resolve
+	// this by serving the by-ID route via the catch-all /v1/prompts/{path...} and
+	// dispatching to the right handler based on path shape.
 	mux.HandleFunc("POST /v1/prompts/refresh", ro.handlePromptRefresh)
+	mux.HandleFunc("GET /v1/prompts", ro.handlePromptList)
+	mux.HandleFunc("PUT /v1/prompts/{slug}", ro.handlePromptUpsert)
+	mux.HandleFunc("POST /v1/prompts/{slug}/activate", ro.handlePromptActivate)
+	mux.HandleFunc("POST /v1/prompts/{slug}/purge", ro.handlePromptPurge)
+	mux.HandleFunc("DELETE /v1/prompts/{slug}", ro.handlePromptDelete)
+	// GET /v1/prompts/{path...} handles all GET prompt sub-paths:
+	//   /v1/prompts/{slug}                 → get by slug
+	//   /v1/prompts/id/{id}               → get by immutable UUID
+	//   /v1/prompts/{slug}/versions        → list versions (501)
+	//   /v1/prompts/{slug}/versions/{ver}  → get specific version
+	mux.HandleFunc("GET /v1/prompts/{path...}", ro.handlePromptGet)
 }

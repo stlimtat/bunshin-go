@@ -211,6 +211,21 @@ func (s *PostgresStore) Rename(ctx context.Context, _, id, newSlug string) error
 	return nil
 }
 
+// Delete tombstones all versions of the fragment identified by slug for tenantID.
+func (s *PostgresStore) Delete(ctx context.Context, tenantID, slug string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE bunshin_fragments SET status = 'deleted' WHERE tenant_id = $1 AND slug = $2`,
+		tenantID, slug,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres store: delete %q: %w", slug, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("fragment slug=%q tenant=%q: not found", slug, tenantID)
+	}
+	return nil
+}
+
 // Watch is not supported — use PromptCache for live updates.
 func (s *PostgresStore) Watch(_ context.Context, _, _ string) (<-chan *Fragment, error) {
 	ch := make(chan *Fragment)

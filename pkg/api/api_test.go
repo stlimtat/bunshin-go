@@ -13,6 +13,7 @@ import (
 
 	"github.com/stlimtat/bunshin-go/pkg/api"
 	"github.com/stlimtat/bunshin-go/pkg/core"
+	"github.com/stlimtat/bunshin-go/pkg/prompt"
 	"github.com/stlimtat/bunshin-go/pkg/workflow"
 	wfmemory "github.com/stlimtat/bunshin-go/pkg/workflow/store/memory"
 )
@@ -170,18 +171,23 @@ func TestRouter_PromptActivate_NotConfigured(t *testing.T) {
 	}
 }
 
-type fakeActivator struct{ promoted string }
+type fakePromptActivator struct{ tenantID, ref string }
 
-func (f *fakeActivator) Promote(_ context.Context, name string) error {
-	f.promoted = name
+func (f *fakePromptActivator) Promote(_ context.Context, tenantID, ref string) error {
+	f.tenantID = tenantID
+	f.ref = ref
 	return nil
 }
 
 func TestRouter_PromptActivate_WithActivator(t *testing.T) {
-	activator := &fakeActivator{}
+	activator := &fakePromptActivator{}
+	backend := prompt.NewMemoryBackend()
 	router := api.NewRouter(
 		&fakeHandler{runnables: map[string]core.Runnable{}},
-		api.RouterConfig{Activator: activator},
+		api.RouterConfig{
+			PromptBackend:   backend,
+			PromptActivator: activator,
+		},
 	)
 	mux := http.NewServeMux()
 	router.Mount(mux)
@@ -191,8 +197,8 @@ func TestRouter_PromptActivate_WithActivator(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Errorf("expected 202, got %d", rec.Code)
 	}
-	if activator.promoted != "my-prompt" {
-		t.Errorf("expected Promote called with 'my-prompt', got %q", activator.promoted)
+	if activator.ref != "my-prompt" {
+		t.Errorf("expected Promote called with 'my-prompt', got %q", activator.ref)
 	}
 }
 
@@ -402,3 +408,102 @@ func jsonEscape(s string) string {
 
 // ensure workflow/store/memory import is used
 var _ workflow.Store = (*wfmemory.Store)(nil)
+
+// ---- prompt CRUD ----
+
+func promptRouter(t *testing.T) (*api.Router, *http.ServeMux) {
+	t.Helper()
+	backend := prompt.NewMemoryBackend()
+	router := api.NewRouter(
+		&fakeHandler{runnables: map[string]core.Runnable{}},
+		api.RouterConfig{PromptBackend: backend},
+	)
+	mux := http.NewServeMux()
+	router.Mount(mux)
+	return router, mux
+}
+
+func TestRouter_PromptUpsert_Create(t *testing.T) {
+	_, mux := promptRouter(t)
+	body := bytes.NewBufferString(`{"content":"hello {{.name}}","tags":["system"]}`)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/v1/prompts/greet", body))
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRouter_PromptList_Empty(t *testing.T) {
+	_, mux := promptRouter(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/prompts", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	var resp map[string]any
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if _, ok := resp["fragments"]; !ok {
+		t.Error("expected fragments key")
+	}
+}
+
+func TestRouter_PromptGetBySlug_NotFound(t *testing.T) {
+	_, mux := promptRouter(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/prompts/nonexistent", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestRouter_PromptDelete_OK(t *testing.T) {
+	backend := prompt.NewMemoryBackend()
+	_ = backend.Put(context.Background(), "default", &prompt.Fragment{Slug: "to-delete", Content: "c"})
+	router := api.NewRouter(
+		&fakeHandler{runnables: map[string]core.Runnable{}},
+		api.RouterConfig{PromptBackend: backend},
+	)
+	mux := http.NewServeMux()
+	router.Mount(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/prompts/to-delete", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestRouter_PromptPurge_Stub(t *testing.T) {
+	_, mux := promptRouter(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/prompts/x/purge", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501, got %d", rec.Code)
+	}
+}
+
+func TestRouter_PromptGetByID_NotFound(t *testing.T) {
+	_, mux := promptRouter(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/prompts/id/nonexistent-uuid", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestRouter_PromptGetVersion_OK(t *testing.T) {
+	backend := prompt.NewMemoryBackend()
+	_ = backend.Put(context.Background(), "default", &prompt.Fragment{Slug: "f", Version: "v1", Content: "old"})
+	router := api.NewRouter(
+		&fakeHandler{runnables: map[string]core.Runnable{}},
+		api.RouterConfig{PromptBackend: backend},
+	)
+	mux := http.NewServeMux()
+	router.Mount(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/prompts/f/versions/v1", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

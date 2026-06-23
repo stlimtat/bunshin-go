@@ -184,6 +184,29 @@ func TestMemoryBackend_TenantIsolation(t *testing.T) {
 	}
 }
 
+func TestMemoryBackend_Delete(t *testing.T) {
+	b := prompt.NewMemoryBackend()
+	f := &prompt.Fragment{Slug: "to-delete", Content: "c"}
+	_ = b.Put(context.Background(), testTenant, f)
+
+	if err := b.Delete(context.Background(), testTenant, "to-delete"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := b.Get(context.Background(), testTenant, "to-delete"); err == nil {
+		t.Error("slug should be gone after Delete")
+	}
+	if _, err := b.GetByID(context.Background(), testTenant, f.ID); err == nil {
+		t.Error("UUID should be gone after Delete")
+	}
+}
+
+func TestMemoryBackend_Delete_NotFound(t *testing.T) {
+	b := prompt.NewMemoryBackend()
+	if err := b.Delete(context.Background(), testTenant, "nonexistent"); err == nil {
+		t.Error("expected error deleting nonexistent slug")
+	}
+}
+
 func TestMemoryBackend_Watch_ReceivesUpdate(t *testing.T) {
 	b := prompt.NewMemoryBackend()
 	ctx, cancel := context.WithCancel(context.Background())

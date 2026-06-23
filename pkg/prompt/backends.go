@@ -161,6 +161,25 @@ func (b *MemoryBackend) Rename(_ context.Context, tenantID, id, newSlug string) 
 }
 
 // Watch returns a channel that receives fragment updates for (tenantID, slug).
+func (b *MemoryBackend) Delete(_ context.Context, tenantID, slug string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	tm, ok := b.bySlug[tenantID]
+	if !ok {
+		return fmt.Errorf("fragment slug=%q tenant=%q: not found", slug, tenantID)
+	}
+	f, ok := tm[slug]
+	if !ok {
+		return fmt.Errorf("fragment slug=%q tenant=%q: not found", slug, tenantID)
+	}
+	delete(tm, slug)
+	delete(b.byUUID, f.ID)
+	if bv, ok := b.byVersion[tenantID]; ok {
+		delete(bv, slug)
+	}
+	return nil
+}
+
 func (b *MemoryBackend) Watch(ctx context.Context, tenantID, slug string) (<-chan *Fragment, error) {
 	ch := make(chan *Fragment, 4)
 	b.mu.Lock()
