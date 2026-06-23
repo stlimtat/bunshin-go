@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stlimtat/bunshin-go/pkg/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -11,7 +12,7 @@ import (
 func TestMemoryStore_CreateAndGet(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
-	spec := &AgentSpec{
+	spec := &agent.AgentSpec{
 		Name:        "test-agent",
 		Description: "A test agent",
 	}
@@ -34,7 +35,7 @@ func TestMemoryStore_CreateAndGet(t *testing.T) {
 func TestMemoryStore_CreateIdempotence(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
-	spec := &AgentSpec{Name: "idempotent-test"}
+	spec := &agent.AgentSpec{Name: "idempotent-test"}
 
 	v1, err := store.Create(ctx, "tenant1", spec)
 	require.NoError(t, err)
@@ -48,7 +49,7 @@ func TestMemoryStore_CreateIdempotence(t *testing.T) {
 func TestMemoryStore_Delete(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
-	spec := &AgentSpec{Name: "delete-test"}
+	spec := &agent.AgentSpec{Name: "delete-test"}
 
 	version, err := store.Create(ctx, "tenant1", spec)
 	require.NoError(t, err)
@@ -70,7 +71,7 @@ func TestMemoryStore_Delete(t *testing.T) {
 func TestMemoryStore_TenantIsolation(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
-	spec := &AgentSpec{Name: "shared"}
+	spec := &agent.AgentSpec{Name: "shared"}
 
 	v1, err := store.Create(ctx, "tenant1", spec)
 	require.NoError(t, err)
@@ -95,8 +96,8 @@ func TestMemoryStore_ListVersions(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
 
-	spec1 := &AgentSpec{Name: "list-test", Description: "v1"}
-	spec2 := &AgentSpec{Name: "list-test", Description: "v2"}
+	spec1 := &agent.AgentSpec{Name: "list-test", Description: "v1"}
+	spec2 := &agent.AgentSpec{Name: "list-test", Description: "v2"}
 
 	v1, err := store.Create(ctx, "tenant1", spec1)
 	require.NoError(t, err)

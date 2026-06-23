@@ -10,6 +10,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/stlimtat/bunshin-go/pkg/agent"
 	"gopkg.in/yaml.v3"
 )
 
@@ -41,7 +42,7 @@ const (
 )
 
 // Create persists spec as a new draft. Idempotent: same content = same version.
-func (s *GitStore) Create(ctx context.Context, tenantID string, spec *AgentSpec) (string, error) {
+func (s *GitStore) Create(ctx context.Context, tenantID string, spec *agent.AgentSpec) (string, error) {
 	if spec == nil {
 		return "", fmt.Errorf("git.Store.Create: spec is nil")
 	}
@@ -64,7 +65,7 @@ func (s *GitStore) Create(ctx context.Context, tenantID string, spec *AgentSpec)
 }
 
 // Get returns the active spec for tenantID/name.
-func (s *GitStore) Get(ctx context.Context, tenantID, name string) (*AgentSpec, error) {
+func (s *GitStore) Get(ctx context.Context, tenantID, name string) (*agent.AgentSpec, error) {
 	branchName := fmt.Sprintf("agents/%s/%s/main", tenantID, name)
 	data, err := s.readSpecFromBranch(ctx, branchName)
 	if err != nil {
@@ -80,7 +81,7 @@ func (s *GitStore) Get(ctx context.Context, tenantID, name string) (*AgentSpec, 
 
 // GetVersion returns a specific version. For git-backed storage, version lookup
 // requires scanning history; for efficiency, only the latest active and draft are reliable.
-func (s *GitStore) GetVersion(ctx context.Context, tenantID, name, version string) (*AgentSpec, error) {
+func (s *GitStore) GetVersion(ctx context.Context, tenantID, name, version string) (*agent.AgentSpec, error) {
 	// Try draft first, then main
 	branchName := fmt.Sprintf("agents/%s/%s/draft", tenantID, name)
 	data, err := s.readSpecFromBranch(ctx, branchName)
@@ -310,10 +311,11 @@ func (s *GitStore) readSpecFromBranch(ctx context.Context, branchName string) ([
 }
 
 // matchesVersion checks if spec's content hash matches version.
-func matchesVersion(spec *AgentSpec, version string) bool {
+func matchesVersion(spec *agent.AgentSpec, version string) bool {
 	computed, err := contentHashYAML(spec)
 	if err != nil {
 		return false
 	}
 	return computed == version
 }
+

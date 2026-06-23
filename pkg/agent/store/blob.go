@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/stlimtat/bunshin-go/pkg/agent"
 	"gocloud.dev/blob"
 	"gopkg.in/yaml.v3"
 )
@@ -29,7 +30,7 @@ func NewBlobStore(bucket *blob.Bucket) *BlobStore {
 }
 
 // Create persists spec as a new draft. Idempotent: same content = same version.
-func (s *BlobStore) Create(ctx context.Context, tenantID string, spec *AgentSpec) (string, error) {
+func (s *BlobStore) Create(ctx context.Context, tenantID string, spec *agent.AgentSpec) (string, error) {
 	if spec == nil {
 		return "", fmt.Errorf("blob.Store.Create: spec is nil")
 	}
@@ -65,7 +66,7 @@ func (s *BlobStore) Create(ctx context.Context, tenantID string, spec *AgentSpec
 }
 
 // Get returns the active version by name.
-func (s *BlobStore) Get(ctx context.Context, tenantID, name string) (*AgentSpec, error) {
+func (s *BlobStore) Get(ctx context.Context, tenantID, name string) (*agent.AgentSpec, error) {
 	activeKey := fmt.Sprintf("%s/%s/active.txt", tenantID, name)
 	data, err := s.bucket.ReadAll(ctx, activeKey)
 	if err != nil {
@@ -77,7 +78,7 @@ func (s *BlobStore) Get(ctx context.Context, tenantID, name string) (*AgentSpec,
 }
 
 // GetVersion returns a specific version.
-func (s *BlobStore) GetVersion(ctx context.Context, tenantID, name, version string) (*AgentSpec, error) {
+func (s *BlobStore) GetVersion(ctx context.Context, tenantID, name, version string) (*agent.AgentSpec, error) {
 	key := fmt.Sprintf("%s/%s/%s.yaml", tenantID, name, version)
 	data, err := s.bucket.ReadAll(ctx, key)
 	if err != nil {

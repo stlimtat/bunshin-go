@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stlimtat/bunshin-go/pkg/agent"
 	"gopkg.in/yaml.v3"
 )
 
@@ -63,7 +64,7 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 
 // Create persists spec as a new draft. Idempotent: same content = same version.
 // If the agent was previously soft-deleted, Create resurrects it.
-func (s *PostgresStore) Create(ctx context.Context, tenantID string, spec *AgentSpec) (string, error) {
+func (s *PostgresStore) Create(ctx context.Context, tenantID string, spec *agent.AgentSpec) (string, error) {
 	if spec == nil {
 		return "", fmt.Errorf("agent/postgres: Create: spec is nil")
 	}
@@ -105,7 +106,7 @@ func (s *PostgresStore) Create(ctx context.Context, tenantID string, spec *Agent
 }
 
 // Get returns the active version by name, or an error if none exists.
-func (s *PostgresStore) Get(ctx context.Context, tenantID, name string) (*AgentSpec, error) {
+func (s *PostgresStore) Get(ctx context.Context, tenantID, name string) (*agent.AgentSpec, error) {
 	var data []byte
 	err := s.pool.QueryRow(ctx,
 		`SELECT content FROM bunshin_agents
@@ -127,7 +128,7 @@ func (s *PostgresStore) Get(ctx context.Context, tenantID, name string) (*AgentS
 }
 
 // GetVersion returns a specific version by name, or an error if absent.
-func (s *PostgresStore) GetVersion(ctx context.Context, tenantID, name, version string) (*AgentSpec, error) {
+func (s *PostgresStore) GetVersion(ctx context.Context, tenantID, name, version string) (*agent.AgentSpec, error) {
 	var data []byte
 	err := s.pool.QueryRow(ctx,
 		`SELECT content FROM bunshin_agents
@@ -261,10 +262,11 @@ func (s *PostgresStore) Delete(ctx context.Context, tenantID, name string) error
 	return nil
 }
 
-func decodeAgentSpec(data []byte) (*AgentSpec, error) {
-	var spec AgentSpec
+func decodeAgentSpec(data []byte) (*agent.AgentSpec, error) {
+	var spec agent.AgentSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("agent/postgres: decode yaml: %w", err)
 	}
 	return &spec, nil
 }
+

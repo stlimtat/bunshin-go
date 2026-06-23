@@ -3,22 +3,24 @@ package store
 import (
 	"context"
 	"fmt"
+
+	"github.com/stlimtat/bunshin-go/pkg/agent"
 )
 
 // FakeStore is a test fake Store for use in agent.Compile and related tests.
 type FakeStore struct {
-	specs map[string]*AgentSpec // name → spec
+	specs map[string]*agent.AgentSpec // name → spec
 }
 
 // NewFakeStore returns an empty FakeStore.
 func NewFakeStore() *FakeStore {
 	return &FakeStore{
-		specs: make(map[string]*AgentSpec),
+		specs: make(map[string]*agent.AgentSpec),
 	}
 }
 
 // Create records spec by name. Ignores tenantID.
-func (s *FakeStore) Create(ctx context.Context, tenantID string, spec *AgentSpec) (string, error) {
+func (s *FakeStore) Create(ctx context.Context, tenantID string, spec *agent.AgentSpec) (string, error) {
 	if spec == nil {
 		return "", fmt.Errorf("fake.Store.Create: spec is nil")
 	}
@@ -34,7 +36,7 @@ func (s *FakeStore) Create(ctx context.Context, tenantID string, spec *AgentSpec
 }
 
 // Get returns the spec by name.
-func (s *FakeStore) Get(ctx context.Context, tenantID, name string) (*AgentSpec, error) {
+func (s *FakeStore) Get(ctx context.Context, tenantID, name string) (*agent.AgentSpec, error) {
 	spec, ok := s.specs[name]
 	if !ok {
 		return nil, fmt.Errorf("agent %q: not found", name)
@@ -43,7 +45,7 @@ func (s *FakeStore) Get(ctx context.Context, tenantID, name string) (*AgentSpec,
 }
 
 // GetVersion returns the spec if name is found and version matches.
-func (s *FakeStore) GetVersion(ctx context.Context, tenantID, name, version string) (*AgentSpec, error) {
+func (s *FakeStore) GetVersion(ctx context.Context, tenantID, name, version string) (*agent.AgentSpec, error) {
 	spec, ok := s.specs[name]
 	if !ok {
 		return nil, fmt.Errorf("agent %q: not found", name)

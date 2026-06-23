@@ -2,21 +2,18 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/stlimtat/bunshin-go/pkg/agent"
-	"gopkg.in/yaml.v3"
 )
 
 // entry holds all versions of one agent for one tenant.
 type entry struct {
-	versions    map[string]*AgentSpec // version → spec
-	versionList []string              // insertion-ordered version strings (oldest first)
-	active      string                // version string of active spec, "" = none
+	versions    map[string]*agent.AgentSpec // version → spec
+	versionList []string                     // insertion-ordered version strings (oldest first)
+	active      string                       // version string of active spec, "" = none
 	deleted     bool
 }
 
@@ -35,7 +32,7 @@ func NewMemoryStore() *MemoryStore {
 // Create persists spec as a new draft. Idempotent: same content = same version,
 // second call is a no-op and returns the existing version.
 // If the agent was previously soft-deleted, Create resurrects it.
-func (s *MemoryStore) Create(ctx context.Context, tenantID string, spec *AgentSpec) (string, error) {
+func (s *MemoryStore) Create(ctx context.Context, tenantID string, spec *agent.AgentSpec) (string, error) {
 	if spec == nil {
 		return "", fmt.Errorf("memory.Store.Create: spec is nil")
 	}
@@ -54,7 +51,7 @@ func (s *MemoryStore) Create(ctx context.Context, tenantID string, spec *AgentSp
 	bucket := s.tenantBucket(tenantID)
 	e, ok := bucket[spec.Name]
 	if !ok {
-		e = &entry{versions: make(map[string]*AgentSpec)}
+		e = &entry{versions: make(map[string]*agent.AgentSpec)}
 		bucket[spec.Name] = e
 	}
 	// Resurrect soft-deleted entries.
@@ -71,7 +68,7 @@ func (s *MemoryStore) Create(ctx context.Context, tenantID string, spec *AgentSp
 }
 
 // Get returns the active version, or an error if none exists.
-func (s *MemoryStore) Get(ctx context.Context, tenantID, name string) (*AgentSpec, error) {
+func (s *MemoryStore) Get(ctx context.Context, tenantID, name string) (*agent.AgentSpec, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -86,7 +83,7 @@ func (s *MemoryStore) Get(ctx context.Context, tenantID, name string) (*AgentSpe
 }
 
 // GetVersion returns the specific version, or an error if absent.
-func (s *MemoryStore) GetVersion(ctx context.Context, tenantID, name, version string) (*AgentSpec, error) {
+func (s *MemoryStore) GetVersion(ctx context.Context, tenantID, name, version string) (*agent.AgentSpec, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -208,7 +205,7 @@ func (s *MemoryStore) tenantBucket(tenantID string) map[string]*entry {
 }
 
 // cloneSpec returns a shallow copy of spec.
-func cloneSpec(s *AgentSpec) *AgentSpec {
+func cloneSpec(s *agent.AgentSpec) *agent.AgentSpec {
 	if s == nil {
 		return nil
 	}
@@ -216,12 +213,3 @@ func cloneSpec(s *AgentSpec) *AgentSpec {
 	return &clone
 }
 
-// contentHashYAML marshals spec to canonical YAML and returns "sha256:" + hex[:32].
-func contentHashYAML(spec *AgentSpec) (string, error) {
-	data, err := yaml.Marshal(spec)
-	if err != nil {
-		return "", fmt.Errorf("yaml marshal: %w", err)
-	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])[:32], nil
-}
