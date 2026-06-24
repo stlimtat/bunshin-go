@@ -146,6 +146,40 @@ _Avoid_: Nested graph, inner graph, child agent
 A `Graph[OrchestratorState]` whose Router decides which subagent to invoke. Contains no LLM calls itself — it delegates to specialist subagents.
 _Avoid_: Supervisor (acceptable but implies hierarchy; orchestrator is more precise), manager agent
 
+**Agent**:
+A declarative subagent defined by an `AgentSpec` and compiled to a `CompiledAgent`. Carries its own system prompt (a `Fragment` referenced by slug), tool allowlist, model selector, and iteration cap. Runs an isolated tool-calling loop in a fresh context and returns a result — the caller never sees the agent's internal turns. The systematic, declarative replacement for hand-written `SubagentNode`.
+_Avoid_: Subagent (use Agent; "subagent" describes the role, not the type), Assistant, Bot
+
+**AgentSpec**:
+A declarative YAML definition of an `Agent`. Fields: `name`, `description`, `system_prompt` (a `FragmentRef`), `tools` (allowlist into `ToolRegistry`), `agents` / `skills` (allowlists resolved against `agent.Store` / `skill.Store`), `model` (`{tier, tags}` into `ProviderRegistry`), `max_iterations` (default 8), optional `input_schema` / `output_schema`. Same `draft → active` lifecycle, content-hash versioning, and tenant-scoped `agent.Store` as `WorkflowSpec`. Resolved eagerly and topologically at compile time — missing refs and reference cycles are compile errors.
+_Avoid_: AgentDefinition, Persona, AgentConfig
+
+**CompiledAgent**:
+The result of `agent.Compile(spec, registries)`. A `Graph[AgentState]` (`llm → [content-based router] → tools → llm … → END`) that implements **both** `core.Runnable` (top-level invoke + YAML graph node) and `tools.Tool` (agent-as-tool delegation). One compile, three invocation surfaces. Enforces a runtime delegation-depth cap via `Meta["bunshin.agent_depth"]`; exceeding `max_iterations` returns the last message with `Meta["bunshin.agent_truncated"] = true` rather than erroring.
+_Avoid_: AgentRunner, AgentInstance
+
+**AgentState**:
+The isolated state a `CompiledAgent` runs on. Holds the task string, structured args, and the agent's own message list. Created fresh per invocation; `Meta` (trace IDs, cost budget, tenant, depth) flows in from the caller, but messages never flow back out — only the final result does.
+_Avoid_: SubState, LoopState
+
+### Skills
+
+**Skill**:
+A named, reusable capability injected into a prompt on demand — instructions plus optional bundled files. Has **no own loop and no own model** (that distinguishes it from an `Agent`); it contributes context to a *consuming* `Agent` or `PromptComposer` and borrows that consumer's sandbox to run any scripts. Defined by a `SkillSpec`.
+_Avoid_: Plugin, Capability (too generic), Ability
+
+**SkillSpec**:
+A declarative definition of a `Skill`. Fields: `name`, `description`, `body` (a `FragmentRef` — the instructions), `files` (`[]FileRef`, stored as `MediaRef`), and `trigger` (`model` or `condition`). Own `draft → active` lifecycle, content-hash versioning, tenant-scoped `skill.Store` — files version atomically with the spec. The skill *body* is a `Fragment` in `PromptBackend`.
+_Avoid_: SkillDefinition, SkillConfig
+
+**Progressive disclosure**:
+The skill loading mechanism for `trigger: model` skills. The skill's `name` + `description` are always cheaply in context (advertised as a synthetic `load_skill_<name>` tool); the full body and file manifest inject only when the model calls the load-tool. `trigger: condition` skills bypass this — the `PromptComposer` evaluates a `FragmentRef` condition at render time and injects matching bodies deterministically, no LLM choice.
+_Avoid_: Lazy loading, on-demand injection
+
+**FileRef**:
+A bundled file in a `SkillSpec`, stored as a `MediaRef` (inline if `< inline_max_bytes`, else MinIO/S3 URL). Reference docs (text/markdown) inject into context on skill load; executable scripts mount into the consuming `Agent`'s sandbox `Session` for its `CodeExecTool` to run. A skill never executes anything itself. With no sandbox available (bare LLM call), scripts are listed but unavailable and the composer sets `Meta["bunshin.skill_scripts_skipped"]`.
+_Avoid_: Attachment, Resource, Asset
+
 ### Prompt
 
 **Fragment**:

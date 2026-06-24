@@ -382,7 +382,7 @@ func createLLMNode(
 
 		// Build tool definitions from tools + agents
 		var toolDefs []llm.ToolDefinition
-		for name, t := range tools {
+		for _, t := range tools {
 			schema := t.Schema()
 			toolDefs = append(toolDefs, llm.ToolDefinition{
 				Name:        schema.Name,
@@ -390,7 +390,7 @@ func createLLMNode(
 				Parameters:  schema.Parameters,
 			})
 		}
-		for name, a := range agents {
+		for _, a := range agents {
 			schema := a.Schema()
 			toolDefs = append(toolDefs, llm.ToolDefinition{
 				Name:        schema.Name,
@@ -458,7 +458,6 @@ func createToolsNode(
 			// Try to find tool
 			tool, ok := tools[tc.Name]
 			var output string
-			var err error
 
 			if ok {
 				// Tool found, execute it

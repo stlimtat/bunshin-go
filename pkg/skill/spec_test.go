@@ -103,7 +103,7 @@ files:
 	if spec1.Version != spec2.Version {
 		t.Errorf("want same version for identical YAML, got %q vs %q", spec1.Version, spec2.Version)
 	}
-	if !spec1.Version[:7] == "sha256:" {
+	if spec1.Version[:7] != "sha256:" {
 		t.Errorf("version should start with sha256:, got %q", spec1.Version)
 	}
 }

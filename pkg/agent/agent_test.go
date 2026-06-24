@@ -11,35 +11,9 @@ import (
 	"github.com/stlimtat/bunshin-go/pkg/tools"
 )
 
-// fakeToolRegistry provides a set of known tools for testing.
-type fakeToolRegistry struct {
-	tools map[string]tools.Tool
-}
-
-func newFakeToolRegistry() *fakeToolRegistry {
-	return &fakeToolRegistry{tools: make(map[string]tools.Tool)}
-}
-
-func (r *fakeToolRegistry) Register(t tools.Tool) error {
-	name := t.Schema().Name
-	r.tools[name] = t
-	return nil
-}
-
-func (r *fakeToolRegistry) Get(name string) (tools.Tool, error) {
-	t, ok := r.tools[name]
-	if !ok {
-		return nil, errToolNotFound
-	}
-	return t, nil
-}
-
-func (r *fakeToolRegistry) List() []tools.ToolSchema {
-	var schemas []tools.ToolSchema
-	for _, t := range r.tools {
-		schemas = append(schemas, t.Schema())
-	}
-	return schemas
+// newFakeToolRegistry creates a ToolRegistry with test tools.
+func newFakeToolRegistry() *tools.ToolRegistry {
+	return tools.NewToolRegistry()
 }
 
 // fakeAgentResolver provides a memoizing agent resolver for testing.
@@ -201,14 +175,19 @@ func TestCompile_HappyPath(t *testing.T) {
 		},
 	}
 
+	fakeProvider := llm.NewFakeProvider(llm.ProviderFake, "test response")
+	reg := llm.NewProviderRegistry(fakeProvider)
+	reg.Register(llm.ProviderFake, fakeProvider, llm.Tags{"tier": "smart"})
+	// FakeProvider has no Ping method, so it will be marked available by pingAll.
+	reg.Start(context.Background())
+
 	registries := CompileRegistries{
 		Tools:   newFakeToolRegistry(),
 		Agents:  newFakeAgentResolver(),
 		Skills:  newFakeSkillResolver(),
 		Prompts: promptBackend,
-		LLM:     llm.NewProviderRegistry(llm.NewFakeProvider("test", "")),
+		LLM:     reg,
 	}
-	registries.LLM.Register(llm.ProviderFake, registries.LLM.Available()[0], llm.Tags{"tier": "smart"})
 
 	ctx := context.Background()
 	compiled, err := Compile(ctx, spec, registries, "test-tenant")
@@ -264,14 +243,19 @@ func TestCompile_MissingTool(t *testing.T) {
 		},
 	}
 
+	fakeProvider := llm.NewFakeProvider(llm.ProviderFake, "test response")
+	reg := llm.NewProviderRegistry(fakeProvider)
+	reg.Register(llm.ProviderFake, fakeProvider, llm.Tags{"tier": "smart"})
+	// FakeProvider has no Ping method, so it will be marked available by pingAll.
+	reg.Start(context.Background())
+
 	registries := CompileRegistries{
 		Tools:   newFakeToolRegistry(),
 		Agents:  newFakeAgentResolver(),
 		Skills:  newFakeSkillResolver(),
 		Prompts: promptBackend,
-		LLM:     llm.NewProviderRegistry(llm.NewFakeProvider("test", "")),
+		LLM:     reg,
 	}
-	registries.LLM.Register(llm.ProviderFake, registries.LLM.Available()[0], llm.Tags{"tier": "smart"})
 
 	ctx := context.Background()
 	_, err := Compile(ctx, spec, registries, "test-tenant")
@@ -297,14 +281,19 @@ func TestCompile_MissingAgent(t *testing.T) {
 		},
 	}
 
+	fakeProvider := llm.NewFakeProvider(llm.ProviderFake, "test response")
+	reg := llm.NewProviderRegistry(fakeProvider)
+	reg.Register(llm.ProviderFake, fakeProvider, llm.Tags{"tier": "smart"})
+	// FakeProvider has no Ping method, so it will be marked available by pingAll.
+	reg.Start(context.Background())
+
 	registries := CompileRegistries{
 		Tools:   newFakeToolRegistry(),
 		Agents:  newFakeAgentResolver(),
 		Skills:  newFakeSkillResolver(),
 		Prompts: promptBackend,
-		LLM:     llm.NewProviderRegistry(llm.NewFakeProvider("test", "")),
+		LLM:     reg,
 	}
-	registries.LLM.Register(llm.ProviderFake, registries.LLM.Available()[0], llm.Tags{"tier": "smart"})
 
 	ctx := context.Background()
 	_, err := Compile(ctx, spec, registries, "test-tenant")
@@ -384,14 +373,19 @@ func TestCompile_InvokeHappyPath(t *testing.T) {
 		},
 	}
 
+	fakeProvider := llm.NewFakeProvider(llm.ProviderFake, "test response")
+	reg := llm.NewProviderRegistry(fakeProvider)
+	reg.Register(llm.ProviderFake, fakeProvider, llm.Tags{"tier": "smart"})
+	// FakeProvider has no Ping method, so it will be marked available by pingAll.
+	reg.Start(context.Background())
+
 	registries := CompileRegistries{
 		Tools:   newFakeToolRegistry(),
 		Agents:  newFakeAgentResolver(),
 		Skills:  newFakeSkillResolver(),
 		Prompts: promptBackend,
-		LLM:     llm.NewProviderRegistry(llm.NewFakeProvider("test", "")),
+		LLM:     reg,
 	}
-	registries.LLM.Register(llm.ProviderFake, registries.LLM.Available()[0], llm.Tags{"tier": "smart"})
 
 	ctx := context.Background()
 	compiled, err := Compile(ctx, spec, registries, "test-tenant")
@@ -511,14 +505,19 @@ func TestCompiledAgent_Schema(t *testing.T) {
 		},
 	}
 
+	fakeProvider := llm.NewFakeProvider(llm.ProviderFake, "test response")
+	reg := llm.NewProviderRegistry(fakeProvider)
+	reg.Register(llm.ProviderFake, fakeProvider, llm.Tags{"tier": "smart"})
+	// FakeProvider has no Ping method, so it will be marked available by pingAll.
+	reg.Start(context.Background())
+
 	registries := CompileRegistries{
 		Tools:   newFakeToolRegistry(),
 		Agents:  newFakeAgentResolver(),
 		Skills:  newFakeSkillResolver(),
 		Prompts: promptBackend,
-		LLM:     llm.NewProviderRegistry(llm.NewFakeProvider("test", "")),
+		LLM:     reg,
 	}
-	registries.LLM.Register(llm.ProviderFake, registries.LLM.Available()[0], llm.Tags{"tier": "smart"})
 
 	ctx := context.Background()
 	compiled, err := Compile(ctx, spec, registries, "test-tenant")
