@@ -139,6 +139,15 @@ func TestStore_ListVersions(t *testing.T) {
 	if len(versions) < 1 {
 		t.Errorf("want at least 1 version, got %d", len(versions))
 	}
+	found := false
+	for _, v := range versions {
+		if v == v1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("created version %q not in ListVersions result %v", v1, versions)
+	}
 }
 
 func TestStore_TenantIsolation(t *testing.T) {

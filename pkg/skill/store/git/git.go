@@ -44,6 +44,16 @@ var committerSig = &object.Signature{
 	Email: "bunshin@noreply",
 }
 
+// newSignature returns a committer signature stamped with the current time.
+// go-git requires a non-zero When for a valid commit.
+func newSignature() *object.Signature {
+	return &object.Signature{
+		Name:  committerSig.Name,
+		Email: committerSig.Email,
+		When:  time.Now(),
+	}
+}
+
 // Store is a go-git-backed skill.Store.
 // Not safe for concurrent writes from multiple processes without an external lock.
 type Store struct {
@@ -120,7 +130,7 @@ func (s *Store) Create(_ context.Context, tenantID string, spec *skill.Spec) (st
 
 	hash, err := wt.Commit(
 		fmt.Sprintf("skill: create %s version %s", spec.Name, spec.Version),
-		&gogit.CommitOptions{Author: committerSig},
+		&gogit.CommitOptions{Author: newSignature()},
 	)
 	if err != nil {
 		return "", fmt.Errorf("skill/git: commit: %w", err)
@@ -195,15 +205,14 @@ func (s *Store) List(_ context.Context, tenantID string) ([]string, error) {
 		return nil, fmt.Errorf("skill/git: worktree: %w", err)
 	}
 
-	prefix := tenantID + "/"
 	skillNames := make(map[string]struct{})
 
-	iter := wt.Filesystem.ReadDir(tenantID)
+	entries, err := wt.Filesystem.ReadDir(tenantID)
 	if err != nil {
 		return nil, nil // Tenant not found.
 	}
 
-	for _, entry := range iter {
+	for _, entry := range entries {
 		if entry.IsDir() {
 			skillNames[entry.Name()] = struct{}{}
 		}
@@ -273,7 +282,7 @@ func (s *Store) Activate(_ context.Context, tenantID, name, version string) erro
 	if err != nil {
 		return fmt.Errorf("skill/git: create active pointer: %w", err)
 	}
-	if _, err := f.WriteString(version); err != nil {
+	if _, err := f.Write([]byte(version)); err != nil {
 		f.Close()
 		return fmt.Errorf("skill/git: write active pointer: %w", err)
 	}
@@ -285,7 +294,7 @@ func (s *Store) Activate(_ context.Context, tenantID, name, version string) erro
 
 	hash, err := wt.Commit(
 		fmt.Sprintf("skill: activate %s %s", name, version),
-		&gogit.CommitOptions{Author: committerSig},
+		&gogit.CommitOptions{Author: newSignature()},
 	)
 	if err != nil {
 		return fmt.Errorf("skill/git: commit active: %w", err)
@@ -319,7 +328,7 @@ func (s *Store) Delete(_ context.Context, tenantID, name string) error {
 
 	hash, err := wt.Commit(
 		fmt.Sprintf("skill: delete %s", name),
-		&gogit.CommitOptions{Author: committerSig},
+		&gogit.CommitOptions{Author: newSignature()},
 	)
 	if err != nil {
 		return fmt.Errorf("skill/git: commit delete: %w", err)
@@ -329,23 +338,29 @@ func (s *Store) Delete(_ context.Context, tenantID, name string) error {
 }
 
 // checkoutBranch ensures the worktree is on the target branch, creating it if needed.
+// On an empty repository (no HEAD yet), it first writes an initial empty commit so
+// the branch can be created.
 func (s *Store) checkoutBranch(wt *gogit.Worktree) error {
 	refName := s.refName()
-	// Try to checkout the branch.
-	err := wt.Checkout(&gogit.CheckoutOptions{Branch: refName})
-	if err == nil {
-		return nil
+
+	// Fast path: branch already exists.
+	if _, refErr := s.repo.Reference(refName, true); refErr == nil {
+		return wt.Checkout(&gogit.CheckoutOptions{Branch: refName})
 	}
-	// If the branch doesn't exist, create it from HEAD.
-	ref, err := s.repo.Head()
-	if err != nil {
-		return fmt.Errorf("skill/git: get HEAD: %w", err)
+
+	// Branch doesn't exist. If the repo has no commits yet, seed an empty commit
+	// so HEAD exists and the branch can be created.
+	if _, headErr := s.repo.Head(); headErr != nil {
+		if _, initErr := wt.Commit("init: bunshin-go skill store", &gogit.CommitOptions{
+			Author:            newSignature(),
+			AllowEmptyCommits: true,
+		}); initErr != nil {
+			return fmt.Errorf("skill/git: init commit: %w", initErr)
+		}
 	}
-	if err := s.repo.Storer.SetReference(plumbing.NewHashReference(refName, ref.Hash())); err != nil {
-		return fmt.Errorf("skill/git: create ref: %w", err)
-	}
-	// Now checkout should succeed.
-	return wt.Checkout(&gogit.CheckoutOptions{Branch: refName})
+
+	// Create the branch from the current HEAD.
+	return wt.Checkout(&gogit.CheckoutOptions{Branch: refName, Create: true})
 }
 
 // updateRef updates the branch reference to point to the new commit.

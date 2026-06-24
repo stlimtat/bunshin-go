@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,10 +20,18 @@ trigger: model
 
 func dbPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := "postgres://postgres:postgres@localhost/bunshin_test"
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set — skipping Postgres integration tests")
+	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
-		t.Skipf("Skipping postgres tests: %v", err)
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	// pgxpool.New is lazy; Ping forces a real connection so an unreachable DB skips.
+	if err := pool.Ping(context.Background()); err != nil {
+		pool.Close()
+		t.Skipf("Postgres unreachable — skipping: %v", err)
 	}
 	t.Cleanup(func() { pool.Close() })
 	return pool

@@ -3,10 +3,10 @@ package git_test
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/stlimtat/bunshin-go/pkg/skill"
 	"github.com/stlimtat/bunshin-go/pkg/skill/store/git"
 )
@@ -20,9 +20,15 @@ trigger: model
 
 func newRepo(t *testing.T) *gogit.Repository {
 	t.Helper()
-	repo, err := gogit.Init(memory.NewStorage(), nil)
+	dir, err := os.MkdirTemp("", "bunshin-skill-git-test-*")
 	if err != nil {
-		t.Fatalf("Init: %v", err)
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("PlainInit: %v", err)
 	}
 	return repo
 }
