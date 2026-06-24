@@ -39,8 +39,12 @@ type CompiledAgent struct {
 	inputSchema  map[string]any
 	outputSchema map[string]any
 
-	// Max iterations: enforced via middleware.
+	// Max iterations: enforced in the content-based router closure.
 	maxIterations int
+
+	// agentNames is the raw agent allowlist from the spec.
+	// Used by the compiler's cycle detector to traverse the transitive dependency graph.
+	agentNames []string
 }
 
 // Name returns the agent identifier.
@@ -51,6 +55,12 @@ func (ca *CompiledAgent) Name() string {
 // Description returns the agent's human-readable description.
 func (ca *CompiledAgent) Description() string {
 	return ca.description
+}
+
+// AgentNames returns the agent names declared in the spec's agents allowlist.
+// Used by the compiler's cycle detector to traverse the transitive dependency graph.
+func (ca *CompiledAgent) AgentNames() []string {
+	return ca.agentNames
 }
 
 // Invoke executes the agent synchronously on the given task.

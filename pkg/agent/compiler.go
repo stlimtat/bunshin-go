@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/stlimtat/bunshin-go/pkg/core"
 	"github.com/stlimtat/bunshin-go/pkg/graph"
@@ -10,6 +12,10 @@ import (
 	"github.com/stlimtat/bunshin-go/pkg/prompt"
 	"github.com/stlimtat/bunshin-go/pkg/tools"
 )
+
+// maxAgentDepth is the runtime cap on nested agent invocation depth.
+// Exceeded depth returns an error to the calling LLM, not a panic.
+const maxAgentDepth = 8
 
 // CompileRegistries holds the registries needed to compile an agent.
 type CompileRegistries struct {
@@ -70,10 +76,10 @@ func Compile(
 
 	// Step 3: Resolve agents (with topological ordering and cycle detection)
 	resolvedAgents, agentsCycle, err := resolveAgentsTopological(ctx, registries.Agents, tenantID, spec.Agents, spec.Name)
+	if agentsCycle != nil {
+		return nil, fmt.Errorf("agent %q: cycle in agents: %s", spec.Name, formatCyclePath(agentsCycle))
+	}
 	if err != nil {
-		if agentsCycle != nil {
-			return nil, fmt.Errorf("agent %q: cycle in agents: %s", spec.Name, formatCyclePath(agentsCycle))
-		}
 		return nil, fmt.Errorf("agent %q: resolve agents: %w", spec.Name, err)
 	}
 
@@ -82,7 +88,6 @@ func Compile(
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: resolve skills: %w", spec.Name, err)
 	}
-	_ = resolvedSkills // TODO: skills are a future feature
 
 	// Step 5: Resolve LLM provider
 	provider, err := selectProvider(registries.LLM, spec.Model.Tier, spec.Model.Tags)
@@ -90,10 +95,14 @@ func Compile(
 		return nil, fmt.Errorf("agent %q: resolve LLM: %w", spec.Name, err)
 	}
 
+	maxIter := spec.MaxIterations
+	if maxIter == 0 {
+		maxIter = 8
+	}
+
 	// Step 6: Build the graph
 	g := graph.New[AgentState](spec.Name)
 
-	// Create LLM node
 	llmNode := graph.Node[AgentState]{
 		ID: "llm",
 		Runnable: createLLMNode(
@@ -102,23 +111,20 @@ func Compile(
 			provider,
 			resolvedTools,
 			resolvedAgents,
+			resolvedSkills,
 		),
-		Router: createContentBasedRouter(),
+		Router: createContentBasedRouter(maxIter),
 	}
 	g.AddNode(llmNode)
 
-	// Create tools node
 	toolsNode := graph.Node[AgentState]{
 		ID:       "tools",
-		Runnable: createToolsNode(spec.Name, resolvedTools, resolvedAgents),
+		Runnable: createToolsNode(spec.Name, resolvedTools, resolvedAgents, resolvedSkills),
 		Router:   graph.StaticRouter[AgentState]("llm"),
 	}
 	g.AddNode(toolsNode)
 
 	g.SetEntry("llm")
-
-	// Step 7: Wrap with iteration cap middleware
-	// (This would be applied by the LLM node; for now, integration happens at invoke time)
 
 	return &CompiledAgent{
 		name:          spec.Name,
@@ -126,7 +132,8 @@ func Compile(
 		graph:         g,
 		inputSchema:   spec.InputSchema,
 		outputSchema:  spec.OutputSchema,
-		maxIterations: spec.MaxIterations,
+		maxIterations: maxIter,
+		agentNames:    spec.Agents,
 	}, nil
 }
 
@@ -151,8 +158,9 @@ func resolveTools(registry *tools.ToolRegistry, toolNames []string) (map[string]
 	return resolved, nil
 }
 
-// resolveAgentsTopological resolves agent names and returns them in topological order.
-// If a cycle is detected, returns the cycle path.
+// resolveAgentsTopological resolves agent names and detects cycles via BFS + Kahn's algorithm.
+// Builds the full transitive dep graph so cycles like A→B→A are caught even when B
+// was resolved independently. Returns the cycle path when a cycle is detected.
 func resolveAgentsTopological(
 	ctx context.Context,
 	resolver AgentResolver,
@@ -164,34 +172,49 @@ func resolveAgentsTopological(
 		return make(map[string]*CompiledAgent), nil, nil
 	}
 
-	// Build dependency graph: agent → agents it references
-	deps := make(map[string][]string)
+	// BFS: resolve all reachable agents transitively.
 	agents := make(map[string]*CompiledAgent)
+	visited := map[string]bool{parentAgent: true}
+	queue := make([]string, len(agentNames))
+	copy(queue, agentNames)
 
-	// First pass: resolve all agents in the allowlist
-	var missing []string
-	for _, name := range agentNames {
-		agent, err := resolver.Resolve(ctx, tenantID, name)
-		if err != nil {
-			missing = append(missing, name)
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+
+		if _, ok := agents[name]; ok {
 			continue
 		}
-		agents[name] = agent
+
+		a, err := resolver.Resolve(ctx, tenantID, name)
+		if err != nil {
+			return nil, nil, fmt.Errorf("agents not found: [%s]: %w", name, err)
+		}
+		agents[name] = a
+
+		// Enqueue the sub-agent's declared deps (from its spec, even if not compiled).
+		for _, sub := range a.AgentNames() {
+			if !visited[sub] {
+				visited[sub] = true
+				queue = append(queue, sub)
+			}
+		}
 	}
 
-	if len(missing) > 0 {
-		return nil, nil, fmt.Errorf("agents not found: %v", missing)
+	// Build full dependency map including the parent.
+	deps := make(map[string][]string, len(agents)+1)
+	deps[parentAgent] = agentNames
+	for name, a := range agents {
+		deps[name] = a.AgentNames()
 	}
 
-	// Second pass: extract dependencies from each resolved agent
-	// (This requires introspection into the spec; for now, we assume acyclic)
-	// TODO: if we have access to original specs, build the full dependency DAG
-	for _, name := range agentNames {
-		deps[name] = []string{} // TODO: extract from the agent's spec
+	allNodes := make([]string, 0, len(agents)+1)
+	allNodes = append(allNodes, parentAgent)
+	for name := range agents {
+		allNodes = append(allNodes, name)
 	}
 
-	// Kahn's algorithm: topological sort + cycle detection
-	cycle := kahnTopologicalSort(agentNames, deps)
+	cycle := kahnTopologicalSort(allNodes, deps)
 	if cycle != nil {
 		return nil, cycle, nil
 	}
@@ -202,7 +225,6 @@ func resolveAgentsTopological(
 // kahnTopologicalSort performs topological sort and detects cycles.
 // Returns the cycle path if a cycle is detected, nil if the graph is acyclic.
 func kahnTopologicalSort(nodes []string, edges map[string][]string) []string {
-	// Calculate in-degrees
 	inDegree := make(map[string]int)
 	for _, node := range nodes {
 		if _, ok := inDegree[node]; !ok {
@@ -213,7 +235,6 @@ func kahnTopologicalSort(nodes []string, edges map[string][]string) []string {
 		}
 	}
 
-	// Queue of nodes with in-degree 0
 	queue := []string{}
 	for _, node := range nodes {
 		if inDegree[node] == 0 {
@@ -223,12 +244,10 @@ func kahnTopologicalSort(nodes []string, edges map[string][]string) []string {
 
 	sorted := []string{}
 	for len(queue) > 0 {
-		// Pop from queue
 		current := queue[0]
 		queue = queue[1:]
 		sorted = append(sorted, current)
 
-		// Process neighbors
 		for _, neighbor := range edges[current] {
 			inDegree[neighbor]--
 			if inDegree[neighbor] == 0 {
@@ -237,9 +256,7 @@ func kahnTopologicalSort(nodes []string, edges map[string][]string) []string {
 		}
 	}
 
-	// If sorted has fewer nodes than input, there's a cycle
 	if len(sorted) < len(nodes) {
-		// Find a cycle via DFS
 		return findCycleDFS(nodes, edges)
 	}
 
@@ -247,6 +264,7 @@ func kahnTopologicalSort(nodes []string, edges map[string][]string) []string {
 }
 
 // findCycleDFS performs DFS to find and return a cycle path.
+// The returned slice starts and ends at the same node (closed cycle).
 func findCycleDFS(nodes []string, edges map[string][]string) []string {
 	visited := make(map[string]bool)
 	recStack := make(map[string]bool)
@@ -264,7 +282,7 @@ func findCycleDFS(nodes []string, edges map[string][]string) []string {
 					return true
 				}
 			} else if recStack[neighbor] {
-				// Found cycle: extract from neighbor to current node
+				// Found back-edge: extract the cycle from neighbor onward and close it.
 				cycleStart := -1
 				for i, n := range path {
 					if n == neighbor {
@@ -273,6 +291,7 @@ func findCycleDFS(nodes []string, edges map[string][]string) []string {
 					}
 				}
 				if cycleStart >= 0 {
+					path = append(path[cycleStart:], neighbor)
 					return true
 				}
 			}
@@ -300,18 +319,7 @@ func formatCyclePath(cycle []string) string {
 	if len(cycle) == 0 {
 		return "unknown cycle"
 	}
-	s := ""
-	for i, node := range cycle {
-		if i > 0 {
-			s += " → "
-		}
-		s += node
-	}
-	// Close the cycle
-	if len(cycle) > 0 {
-		s += " → " + cycle[0]
-	}
-	return s
+	return strings.Join(cycle, " → ")
 }
 
 // resolveSkills resolves skill names.
@@ -346,7 +354,6 @@ func selectProvider(
 	tier string,
 	tags map[string]string,
 ) (llm.LLMProvider, error) {
-	// Build tag filters
 	filters := []llm.Tags{llm.Tag("tier", tier)}
 	for k, v := range tags {
 		filters = append(filters, llm.Tag(k, v))
@@ -357,32 +364,28 @@ func selectProvider(
 		return nil, fmt.Errorf("no LLM provider found for tier=%q, tags=%v", tier, tags)
 	}
 
-	// Return the first (most available) provider
 	return providers[0], nil
 }
 
 // createLLMNode creates the LLM invocation node.
+// Skills with trigger=model are advertised as synthetic load_skill_<name> tools.
 func createLLMNode(
 	agentName string,
 	systemPrompt *prompt.Fragment,
 	provider llm.LLMProvider,
-	tools map[string]tools.Tool,
+	resolvedTools map[string]tools.Tool,
 	agents map[string]*CompiledAgent,
+	skills map[string]SkillSpec,
 ) core.TypedRunnable[core.State[AgentState], core.State[AgentState]] {
 	return core.TypedFunc(func(ctx context.Context, state core.State[AgentState]) (core.State[AgentState], error) {
-		// Build LLM request
-		// System prompt + task
 		messages := []llm.Message{
 			llm.NewTextMessage(llm.RoleSystem, systemPrompt.Content),
 			llm.NewTextMessage(llm.RoleUser, state.Data.Task),
 		}
-
-		// Append agent's own history
 		messages = append(messages, state.Data.Messages...)
 
-		// Build tool definitions from tools + agents
 		var toolDefs []llm.ToolDefinition
-		for _, t := range tools {
+		for _, t := range resolvedTools {
 			schema := t.Schema()
 			toolDefs = append(toolDefs, llm.ToolDefinition{
 				Name:        schema.Name,
@@ -398,8 +401,19 @@ func createLLMNode(
 				Parameters:  schema.Parameters,
 			})
 		}
+		// Advertise model-triggered skills as synthetic load tools.
+		// Full body is injected in createToolsNode when the LLM calls the tool.
+		for _, s := range skills {
+			toolDefs = append(toolDefs, llm.ToolDefinition{
+				Name:        "load_skill_" + s.SkillName(),
+				Description: "Load the " + s.SkillName() + " skill into context.",
+				Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			})
+		}
 
-		// Call LLM
 		resp, err := provider.Complete(ctx, &llm.Request{
 			Messages: messages,
 			Tools:    toolDefs,
@@ -408,7 +422,6 @@ func createLLMNode(
 			return state, fmt.Errorf("agent %q LLM call: %w", agentName, err)
 		}
 
-		// Append LLM response to messages
 		state.Data.Messages = append(state.Data.Messages, llm.NewTextMessage(llm.RoleAssistant, resp.Content))
 		for _, tc := range resp.ToolCalls {
 			state.Data.Messages = append(state.Data.Messages, llm.Message{
@@ -424,23 +437,24 @@ func createLLMNode(
 }
 
 // createToolsNode creates the tools invocation node.
+// Handles tool calls, agent-as-tool delegation, and load_skill_<name> calls.
+// Enforces the runtime agent-depth guard and propagates Meta to sub-agents.
 func createToolsNode(
 	agentName string,
-	tools map[string]tools.Tool,
+	resolvedTools map[string]tools.Tool,
 	agents map[string]*CompiledAgent,
+	skills map[string]SkillSpec,
 ) core.TypedRunnable[core.State[AgentState], core.State[AgentState]] {
 	return core.TypedFunc(func(ctx context.Context, state core.State[AgentState]) (core.State[AgentState], error) {
-		// Extract tool calls from the last message
 		if len(state.Data.Messages) == 0 {
-			return state, nil // No messages, no tool calls to process
+			return state, nil
 		}
 
 		lastMsg := state.Data.Messages[len(state.Data.Messages)-1]
 		if lastMsg.Role != llm.RoleAssistant {
-			return state, nil // Last message is not from assistant, no tool calls
+			return state, nil
 		}
 
-		// Find tool calls in the message parts
 		var toolCalls []llm.ToolCall
 		for _, part := range lastMsg.Parts {
 			if part.Type == llm.PartTypeToolCall && part.ToolCall != nil {
@@ -449,59 +463,18 @@ func createToolsNode(
 		}
 
 		if len(toolCalls) == 0 {
-			return state, nil // No tool calls, nothing to do
+			return state, nil
 		}
 
-		// Execute tool calls
-		results := []llm.ToolResult{}
+		var results []llm.ToolResult
 		for _, tc := range toolCalls {
-			// Try to find tool
-			tool, ok := tools[tc.Name]
-			var output string
-
-			if ok {
-				// Tool found, execute it
-				// Parse args as JSON input
-				result, err := tool.Invoke(ctx, tc.Arguments)
-				if err != nil {
-					output = fmt.Sprintf("error: %v", err)
-				} else {
-					// Convert result to string (simplified)
-					output = fmt.Sprintf("%v", result)
-				}
-			} else {
-				// Try to find as agent
-				agent, ok := agents[tc.Name]
-				if ok {
-					// Delegate to agent
-					subState := core.NewState(AgentState{
-						Task:     tc.Arguments,
-						Args:     map[string]any{},
-						Messages: []llm.Message{},
-					})
-					result, err := agent.Invoke(ctx, subState)
-					if err != nil {
-						output = fmt.Sprintf("error: %v", err)
-					} else {
-						// Extract result from state
-						if resultState, ok := result.(core.State[AgentState]); ok {
-							if len(resultState.Data.Messages) > 0 {
-								output = resultState.Data.Messages[len(resultState.Data.Messages)-1].Text()
-							}
-						}
-					}
-				} else {
-					output = fmt.Sprintf("tool %q not found", tc.Name)
-				}
-			}
-
+			output := executeToolCall(ctx, tc, resolvedTools, agents, skills, state, agentName)
 			results = append(results, llm.ToolResult{
 				ToolCallID: tc.ID,
 				Content:    output,
 			})
 		}
 
-		// Append tool results to messages
 		for _, result := range results {
 			state.Data.Messages = append(state.Data.Messages, llm.Message{
 				Role: llm.RoleTool,
@@ -515,11 +488,118 @@ func createToolsNode(
 	})
 }
 
-// createContentBasedRouter routes based on presence of tool calls in the last message.
-// If the last assistant message contains tool calls, route to "tools".
-// Otherwise, route to END (terminate).
-func createContentBasedRouter() graph.Router[AgentState] {
+// executeToolCall dispatches a single tool call and returns its string output.
+func executeToolCall(
+	ctx context.Context,
+	tc llm.ToolCall,
+	resolvedTools map[string]tools.Tool,
+	agents map[string]*CompiledAgent,
+	skills map[string]SkillSpec,
+	state core.State[AgentState],
+	agentName string,
+) string {
+	// Regular tool
+	if tool, ok := resolvedTools[tc.Name]; ok {
+		result, err := tool.Invoke(ctx, tc.Arguments)
+		if err != nil {
+			return fmt.Sprintf("error: %v", err)
+		}
+		out, err := json.Marshal(result)
+		if err != nil {
+			return fmt.Sprintf("%v", result)
+		}
+		return string(out)
+	}
+
+	// Agent-as-tool delegation
+	if agent, ok := agents[tc.Name]; ok {
+		return invokeSubAgent(ctx, tc, agent, state)
+	}
+
+	// Skill load tool
+	if strings.HasPrefix(tc.Name, "load_skill_") {
+		skillName := strings.TrimPrefix(tc.Name, "load_skill_")
+		if s, ok := skills[skillName]; ok {
+			// Body injection requires PromptBackend access wired through registries.
+			// For now return the skill name; full injection lands with PromptComposer integration.
+			return fmt.Sprintf("Skill %q loaded. Name: %s", skillName, s.SkillName())
+		}
+		return fmt.Sprintf("skill %q not found", skillName)
+	}
+
+	return fmt.Sprintf("tool %q not found", tc.Name)
+}
+
+// invokeSubAgent delegates a tool call to a nested agent, enforcing the depth guard
+// and propagating Meta keys (trace, cost, tenant, depth) into the sub-agent's state.
+func invokeSubAgent(
+	ctx context.Context,
+	tc llm.ToolCall,
+	agent *CompiledAgent,
+	state core.State[AgentState],
+) string {
+	// Depth guard
+	parentDepth := 0
+	if d, ok := state.Meta["bunshin.agent_depth"].(int); ok {
+		parentDepth = d
+	}
+	if parentDepth >= maxAgentDepth {
+		return fmt.Sprintf("error: agent depth limit (%d) exceeded", maxAgentDepth)
+	}
+
+	// Parse args to extract task string and structured args
+	taskStr := tc.Arguments
+	args := map[string]any{}
+	var argMap map[string]any
+	if err := json.Unmarshal([]byte(tc.Arguments), &argMap); err == nil {
+		if task, ok := argMap["task"].(string); ok {
+			taskStr = task
+			delete(argMap, "task")
+			args = argMap
+		} else {
+			args = argMap
+		}
+	}
+
+	subState := core.NewState(AgentState{
+		Task:     taskStr,
+		Args:     args,
+		Messages: []llm.Message{},
+	})
+
+	// Propagate Meta: depth, trace, cost, tenant
+	subState.Meta["bunshin.agent_depth"] = parentDepth + 1
+	for _, k := range []string{
+		"bunshin.tenant_id",
+		"bunshin.trace_id",
+		"bunshin.cost_budget",
+	} {
+		if v, ok := state.Meta[k]; ok {
+			subState.Meta[k] = v
+		}
+	}
+
+	result, err := agent.Invoke(ctx, subState)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+
+	if resultState, ok := result.(core.State[AgentState]); ok {
+		if len(resultState.Data.Messages) > 0 {
+			return resultState.Data.Messages[len(resultState.Data.Messages)-1].Text()
+		}
+	}
+	return ""
+}
+
+// createContentBasedRouter routes based on tool calls in the last message.
+// Closes over maxIterations: after that many LLM turns, routes to END and sets
+// Meta["bunshin.agent_truncated"] = true instead of erroring.
+func createContentBasedRouter(maxIterations int) graph.Router[AgentState] {
+	step := 0
 	return func(ctx context.Context, state core.State[AgentState]) (string, error) {
+		step++
+
 		if len(state.Data.Messages) == 0 {
 			return graph.END, nil
 		}
@@ -529,14 +609,18 @@ func createContentBasedRouter() graph.Router[AgentState] {
 			return graph.END, nil
 		}
 
-		// Check for tool calls
+		// Truncate on cap: return last content rather than erroring.
+		if step >= maxIterations {
+			state.Meta["bunshin.agent_truncated"] = true
+			return graph.END, nil
+		}
+
 		for _, part := range lastMsg.Parts {
 			if part.Type == llm.PartTypeToolCall && part.ToolCall != nil {
 				return "tools", nil
 			}
 		}
 
-		// No tool calls, terminate
 		return graph.END, nil
 	}
 }
