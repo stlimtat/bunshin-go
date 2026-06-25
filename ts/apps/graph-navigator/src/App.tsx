@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ReactFlow,
   addEdge,
@@ -14,6 +14,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { connectSSE, type StreamEvent } from "./sse.ts";
+
+const BASE = "/v1";
 
 const INITIAL_NODES: Node[] = [
   { id: "start", position: { x: 100, y: 200 }, data: { label: "START" } },
@@ -31,12 +33,27 @@ function statusColor(status: string): string {
   }
 }
 
+async function fetchWorkflows(): Promise<string[]> {
+  const res = await fetch(`${BASE}/workflows`);
+  if (!res.ok) return [];
+  const body = await res.json();
+  return (body.workflows ?? []) as string[];
+}
+
 export function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState(INITIAL_NODES);
   const [edges, setEdges, onEdgesChange] = useEdgesState(INITIAL_EDGES);
-  const [workflowId, setWorkflowId] = useState("my-workflow");
+  const [workflows, setWorkflows] = useState<string[]>([]);
+  const [workflowId, setWorkflowId] = useState("");
   const [tokens, setTokens] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    fetchWorkflows().then((names) => {
+      setWorkflows(names);
+      if (names.length > 0) setWorkflowId(names[0]);
+    });
+  }, []);
 
   const onConnect = useCallback(
     (connection: Connection) =>
@@ -52,11 +69,12 @@ export function App() {
   const handleEvent = useCallback(
     (ev: StreamEvent) => {
       if (ev.type === "step_start" && ev.step_id) {
+        const stepId = ev.step_id;
         setNodes((nds) => {
-          const exists = nds.find((n) => n.id === ev.step_id);
+          const exists = nds.find((n) => n.id === stepId);
           if (exists) {
             return nds.map((n) =>
-              n.id === ev.step_id
+              n.id === stepId
                 ? { ...n, style: { ...n.style, background: statusColor("running") } }
                 : n
             );
@@ -65,9 +83,9 @@ export function App() {
           return [
             ...nds,
             {
-              id: ev.step_id,
+              id: stepId,
               position: { x, y: 200 },
-              data: { label: ev.step_id },
+              data: { label: stepId },
               style: { background: statusColor("running") },
             },
           ];
@@ -90,9 +108,11 @@ export function App() {
   );
 
   const runWorkflow = () => {
-    if (running) return;
+    if (running || !workflowId) return;
     setRunning(true);
     setTokens([]);
+    setNodes(INITIAL_NODES);
+    setEdges(INITIAL_EDGES);
     connectSSE(workflowId, handleEvent, () => setRunning(false));
   };
 
@@ -109,15 +129,18 @@ export function App() {
         }}
       >
         <span style={{ fontWeight: 700, fontSize: 16 }}>graph-navigator</span>
-        <input
+        <select
           value={workflowId}
           onChange={(e) => setWorkflowId(e.target.value)}
-          style={{ fontFamily: "monospace", fontSize: 13, padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: 4 }}
-          placeholder="workflow id"
-        />
+          style={{ fontFamily: "monospace", fontSize: 13, padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: 4, background: "#fff" }}
+        >
+          {workflows.length === 0
+            ? <option value="">loading…</option>
+            : workflows.map((w) => <option key={w} value={w}>{w}</option>)}
+        </select>
         <button
           onClick={runWorkflow}
-          disabled={running}
+          disabled={running || !workflowId}
           style={{
             padding: "5px 14px",
             background: running ? "#d1d5db" : "#6366f1",

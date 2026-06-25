@@ -12,6 +12,54 @@ Working examples showing how to use bunshin-go features. Each example is self-co
 
 ---
 
+## Job search workflow
+
+A complete multi-agent pipeline that searches job boards, scores each listing with three
+advisor agents, generates a tailored resume and cover letter per match, and submits the
+applications automatically.
+
+```bash
+go run ./examples/hello-job-search
+```
+
+**Pipeline:**
+
+```
+search → analyze → summarize → generate → submit
+```
+
+| Node | Role |
+|------|------|
+| `search` | Queries job boards and returns matching listings |
+| `analyze` | Runs `tech-advisor`, `culture-advisor`, and `comp-advisor` agents on each listing |
+| `summarize` | Synthesizes scores into a ranked human-readable summary |
+| `generate` | Writes a tailored resume and cover letter for each job above the fit threshold |
+| `submit` | Posts each application to the appropriate job site |
+
+The example ships with stub implementations so it runs without API keys. To wire up real
+LLM providers and job-board clients, replace the stub nodes:
+
+```go
+// Real LLM provider (drop-in for any stub advisor)
+provider, err := llm.NewOpenAIProvider(llm.OpenAIConfig{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+    Model:  "gpt-4o",
+})
+
+// Replace techAdvisor with an LLM call:
+resp, err := provider.Complete(ctx, &llm.Request{
+    Messages: []llm.Message{
+        llm.NewTextMessage(llm.RoleSystem, "You are a technical recruiter evaluating job fit."),
+        llm.NewTextMessage(llm.RoleUser, fmt.Sprintf("Job: %+v\nCandidate resume: %s", job, resume)),
+    },
+})
+```
+
+Each node is a `core.TypedFunc` wired into a `graph.Graph[jobSearchState]` — swap any
+node for an agent compiled via `agent.Compile` when you need tool use or multi-turn loops.
+
+---
+
 ## CLI examples
 
 The `bunshin` CLI ships several built-in demo commands.

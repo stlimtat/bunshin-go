@@ -1,15 +1,15 @@
 openapi: "3.1.0"
 info:
-  title: bunshin-go Workflow API
+  title: bunshin-go API
   description: |
-    REST API for executing bunshin-go workflows over HTTP/2.
+    REST API for bunshin-go — a Go LangChain/LangGraph clone.
 
-    Two execution modes:
-    - **Synchronous** (`POST /workflows/{id}`): blocks until the workflow
-      completes and returns the final output.
-    - **Streaming** (`GET /workflows/{id}/stream`): returns a Server-Sent
-      Events stream of step events and LLM tokens.
-  version: "0.1.0"
+    All application endpoints carry a `/v1` prefix. Probe endpoints have no version prefix.
+
+    **Workflow execution modes:**
+    - **Synchronous** (`POST /v1/workflows/{name}/invoke`): blocks until complete.
+    - **Streaming** (`GET /v1/workflows/{name}/stream`): Server-Sent Events of step events and LLM tokens.
+  version: "0.2.0"
   contact:
     name: bunshin-go
     url: https://github.com/stlimtat/bunshin-go
@@ -20,17 +20,167 @@ servers:
   - url: http://localhost:8080
     description: Local development server
 
+tags:
+  - name: workflows
+    description: Workflow CRUD and execution
+  - name: threads
+    description: Conversation thread history
+  - name: prompts
+    description: Prompt fragment CRUD
+  - name: probe
+    description: Health and readiness probes
+
 paths:
-  /workflows/{id}:
+  # ── Workflow CRUD ──────────────────────────────────────────────────────────
+
+  /v1/workflows:
     post:
-      operationId: executeWorkflow
+      tags: [workflows]
+      operationId: createWorkflow
+      summary: Create a draft workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowSpec"
+            examples:
+              basic:
+                summary: Simple two-node workflow
+                value:
+                  name: summarize
+                  steps:
+                    - id: reason
+                      type: llm
+                    - id: format
+                      type: llm
+      responses:
+        "201":
+          description: Draft created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      tags: [workflows]
+      operationId: listWorkflows
+      summary: List workflow names
+      responses:
+        "200":
+          description: List of workflow names
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflows:
+                    type: array
+                    items:
+                      type: string
+                    example: [summarize, job-search, echo]
+
+  /v1/workflows/{name}:
+    get:
+      tags: [workflows]
+      operationId: getWorkflow
+      summary: Get active workflow spec
+      parameters:
+        - $ref: "#/components/parameters/WorkflowName"
+      responses:
+        "200":
+          description: Active workflow spec
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowSpec"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [workflows]
+      operationId: deleteWorkflow
+      summary: Soft-delete a workflow
+      parameters:
+        - $ref: "#/components/parameters/WorkflowName"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/workflows/{name}/versions:
+    get:
+      tags: [workflows]
+      operationId: listWorkflowVersions
+      summary: List workflow versions (oldest first)
+      parameters:
+        - $ref: "#/components/parameters/WorkflowName"
+      responses:
+        "200":
+          description: Version list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WorkflowVersion"
+
+  /v1/workflows/{name}/versions/{ver}:
+    get:
+      tags: [workflows]
+      operationId: getWorkflowVersion
+      summary: Get a specific workflow version
+      parameters:
+        - $ref: "#/components/parameters/WorkflowName"
+        - name: ver
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "sha256:abc123"
+      responses:
+        "200":
+          description: Workflow version spec
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowSpec"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/workflows/{name}/activate:
+    post:
+      tags: [workflows]
+      operationId: activateWorkflow
+      summary: Promote a draft to active
+      parameters:
+        - $ref: "#/components/parameters/WorkflowName"
+      responses:
+        "200":
+          description: Activated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowVersion"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Workflow execution ─────────────────────────────────────────────────────
+
+  /v1/workflows/{name}/invoke:
+    post:
+      tags: [workflows]
+      operationId: invokeWorkflow
       summary: Execute a workflow synchronously
       description: |
-        Runs the workflow identified by `id` with the given input and waits
-        for completion. Use the streaming endpoint for long-running workflows
-        or to receive LLM tokens as they arrive.
+        Runs the workflow and blocks until completion. For long-running workflows
+        or LLM token streaming, use `GET /v1/workflows/{name}/stream` instead.
       parameters:
-        - $ref: "#/components/parameters/WorkflowID"
+        - $ref: "#/components/parameters/WorkflowName"
       requestBody:
         required: true
         content:
@@ -38,32 +188,23 @@ paths:
             schema:
               $ref: "#/components/schemas/WorkflowRequest"
             examples:
-              basic:
-                summary: Simple echo workflow
+              job-search:
+                summary: Job search workflow
                 value:
-                  workflow_id: echo
-                  thread_id: thread-abc123
+                  thread_id: thread-001
                   input:
-                    message: "Hello, world!"
+                    query: "senior Go engineer, remote, AI platform"
       responses:
         "200":
-          description: Workflow completed successfully
+          description: Workflow completed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/WorkflowResponse"
         "400":
-          description: Invalid request body
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+          $ref: "#/components/responses/BadRequest"
         "404":
-          description: Workflow not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+          $ref: "#/components/responses/NotFound"
         "500":
           description: Workflow execution failed
           content:
@@ -71,87 +212,365 @@ paths:
               schema:
                 $ref: "#/components/schemas/WorkflowResponse"
 
-  /workflows/{id}/stream:
+  /v1/workflows/{name}/stream:
     get:
+      tags: [workflows]
       operationId: streamWorkflow
-      summary: Execute a workflow with Server-Sent Events streaming
+      summary: Execute a workflow with SSE streaming
       description: |
-        Runs the workflow and streams execution events back to the client
-        as Server-Sent Events (SSE). Each event has a `type` field:
+        Runs the workflow and streams execution events as Server-Sent Events.
 
+        Event types:
         - `step_start` — a graph node began executing
         - `llm_token` — one incremental LLM token
         - `step_end` — a graph node completed
-        - `error` — the workflow failed; stream closes after this event
-        - `done` — the workflow completed; stream closes after this event
+        - `error` — workflow failed; stream closes
+        - `done` — workflow completed; stream closes
       parameters:
-        - $ref: "#/components/parameters/WorkflowID"
+        - $ref: "#/components/parameters/WorkflowName"
         - name: input
           in: query
-          description: |
-            JSON-encoded workflow input object.
-            Example: `?input={"message":"hello"}`
+          description: JSON-encoded workflow input. Example `?input={"query":"go engineer"}`
           required: false
           schema:
             type: string
             contentMediaType: application/json
       responses:
         "200":
-          description: SSE stream of workflow events
+          description: SSE stream
           content:
             text/event-stream:
               schema:
                 $ref: "#/components/schemas/StreamEvent"
               examples:
-                stream:
-                  summary: Typical streaming sequence
+                job-search:
+                  summary: Job search streaming sequence
                   value: |
-                    data: {"type":"step_start","step_id":"reason"}
+                    data: {"type":"step_start","step_id":"search"}
 
-                    data: {"type":"llm_token","token":"Hello"}
+                    data: {"type":"step_end","step_id":"search"}
 
-                    data: {"type":"llm_token","token":" world"}
+                    data: {"type":"step_start","step_id":"analyze"}
 
-                    data: {"type":"step_end","step_id":"reason"}
+                    data: {"type":"step_end","step_id":"analyze"}
 
-                    data: {"type":"done","output":{"result":"Hello world"}}
+                    data: {"type":"done","output":{"summary":"Ranked job matches:\n  [fit=80%] ..."}}
 
         "404":
-          description: Workflow not found
+          $ref: "#/components/responses/NotFound"
+
+  # ── Threads ────────────────────────────────────────────────────────────────
+
+  /v1/threads:
+    get:
+      tags: [threads]
+      operationId: listThreads
+      summary: List conversation threads
+      responses:
+        "200":
+          description: Thread list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  threads:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Thread"
+
+  /v1/threads/{id}/messages:
+    get:
+      tags: [threads]
+      operationId: getThreadMessages
+      summary: Get message history for a thread
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: thread-abc123
+      responses:
+        "200":
+          description: Message list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Message"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Prompts ────────────────────────────────────────────────────────────────
+
+  /v1/prompts:
+    get:
+      tags: [prompts]
+      operationId: listPrompts
+      summary: List active prompt fragments for tenant
+      responses:
+        "200":
+          description: Fragment list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  prompts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Fragment"
+
+  /v1/prompts/refresh:
+    post:
+      tags: [prompts]
+      operationId: refreshPrompts
+      summary: Force in-process prompt cache refresh
+      responses:
+        "204":
+          description: Refreshed
+
+  /v1/prompts/{slug}:
+    put:
+      tags: [prompts]
+      operationId: upsertPrompt
+      summary: Create or update a prompt fragment draft
+      parameters:
+        - $ref: "#/components/parameters/PromptSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FragmentBody"
+            examples:
+              system-prompt:
+                summary: Agent system prompt fragment
+                value:
+                  content: "You are {{.Name}}, a helpful assistant specialised in {{.Domain}}."
+                  variables: [Name, Domain]
+                  tags: [system]
+      responses:
+        "200":
+          description: Fragment upserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fragment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      tags: [prompts]
+      operationId: getPrompt
+      summary: Get active fragment by slug
+      parameters:
+        - $ref: "#/components/parameters/PromptSlug"
+      responses:
+        "200":
+          description: Active fragment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fragment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [prompts]
+      operationId: deletePrompt
+      summary: Soft-delete a prompt fragment
+      parameters:
+        - $ref: "#/components/parameters/PromptSlug"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/prompts/{slug}/activate:
+    post:
+      tags: [prompts]
+      operationId: activatePrompt
+      summary: Promote newest draft to active
+      parameters:
+        - $ref: "#/components/parameters/PromptSlug"
+      responses:
+        "200":
+          description: Activated fragment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fragment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/prompts/{slug}/purge:
+    post:
+      tags: [prompts]
+      operationId: purgePrompt
+      summary: Hard-delete a prompt fragment (irreversible)
+      parameters:
+        - $ref: "#/components/parameters/PromptSlug"
+      responses:
+        "204":
+          description: Purged
+        "501":
+          description: Not implemented
+
+  /v1/prompts/{slug}/versions:
+    get:
+      tags: [prompts]
+      operationId: listPromptVersions
+      summary: List all versions of a prompt (newest first, metadata only)
+      parameters:
+        - $ref: "#/components/parameters/PromptSlug"
+      responses:
+        "200":
+          description: Version list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Fragment"
+
+  /v1/prompts/{slug}/versions/{ver}:
+    get:
+      tags: [prompts]
+      operationId: getPromptVersion
+      summary: Get a specific prompt version
+      parameters:
+        - $ref: "#/components/parameters/PromptSlug"
+        - name: ver
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "sha256:abc123"
+      responses:
+        "200":
+          description: Fragment at that version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fragment"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Probe ──────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [probe]
+      operationId: health
+      summary: Liveness probe
+      responses:
+        "200":
+          description: OK
+
+  /live:
+    get:
+      tags: [probe]
+      operationId: live
+      summary: Liveness probe (alias)
+      responses:
+        "200":
+          description: OK
+
+  /ready:
+    get:
+      tags: [probe]
+      operationId: ready
+      summary: Readiness probe
+      responses:
+        "200":
+          description: OK
 
 components:
   parameters:
-    WorkflowID:
-      name: id
+    WorkflowName:
+      name: name
       in: path
       required: true
-      description: The workflow identifier registered with the server.
+      description: Workflow identifier.
       schema:
         type: string
-        example: summarize
+        example: job-search
+
+    PromptSlug:
+      name: slug
+      in: path
+      required: true
+      description: Prompt fragment slug (URL-safe identifier).
+      schema:
+        type: string
+        example: system-persona
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    WorkflowSpec:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: job-search
+        description:
+          type: string
+          example: Multi-agent job search pipeline
+        steps:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    WorkflowVersion:
+      type: object
+      properties:
+        name:
+          type: string
+          example: job-search
+        version:
+          type: string
+          example: "sha256:abc123"
+        status:
+          type: string
+          enum: [draft, active]
+
     WorkflowRequest:
       type: object
-      required:
-        - input
+      required: [input]
       properties:
-        workflow_id:
-          type: string
-          description: Identifies which workflow to run (also encoded in path).
-          example: summarize
         thread_id:
           type: string
-          description: |
-            Horizontal-scale coordination key. Pass the same ThreadID to any
-            node in the cluster to resume a checkpointed workflow.
+          description: Horizontal-scale coordination key for checkpoint/resume.
           example: thread-abc123
         input:
           type: object
           description: Workflow-specific input payload.
           additionalProperties: true
           example:
-            text: "Go is a statically typed language."
+            query: "senior Go engineer, remote, AI platform"
 
     WorkflowResponse:
       type: object
@@ -161,32 +580,90 @@ components:
           example: thread-abc123
         output:
           type: object
-          description: Workflow output. Present on success.
+          description: Workflow output (present on success).
           additionalProperties: true
         error:
           type: string
-          description: Error message. Present on failure.
+          description: Error message (present on failure).
 
     StreamEvent:
       type: object
-      required:
-        - type
+      required: [type]
       properties:
         type:
           type: string
           enum: [step_start, llm_token, step_end, error, done]
-          description: Event type.
         step_id:
           type: string
-          description: Node ID (present on step_start / step_end).
+          description: Node ID (step_start / step_end).
         token:
           type: string
-          description: LLM token fragment (present on llm_token).
+          description: LLM token fragment (llm_token).
         output:
-          description: Final workflow output (present on done).
+          description: Final workflow output (done).
         error:
           type: string
-          description: Error message (present on error).
+          description: Error message (error).
+
+    Thread:
+      type: object
+      properties:
+        id:
+          type: string
+          example: thread-abc123
+        created_at:
+          type: string
+          format: date-time
+
+    Message:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system, tool]
+        content:
+          type: string
+
+    Fragment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: system-persona
+        content:
+          type: string
+        variables:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        version:
+          type: string
+          example: "sha256:abc123"
+        status:
+          type: string
+          enum: [draft, active]
+
+    FragmentBody:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+        variables:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
 
     ErrorResponse:
       type: string
