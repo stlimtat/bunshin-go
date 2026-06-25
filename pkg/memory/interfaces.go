@@ -42,3 +42,13 @@ type MessageStore interface {
 	// Len returns the total number of messages stored.
 	Len() int
 }
+
+// ThreadRegistry manages per-thread MessageStores.
+// All methods are safe for concurrent use.
+type ThreadRegistry interface {
+	// List returns the IDs of all known threads.
+	List(ctx context.Context) ([]string, error)
+
+	// GetOrCreate returns the MessageStore for threadID, creating one if absent.
+	GetOrCreate(ctx context.Context, threadID string) (MessageStore, error)
+}

@@ -1,15 +1,17 @@
-# bunshin-go hello-world workflow stack.
+# bunshin-go backend stack.
 #
 # Services:
-#   bunshin  — bunshin-go HTTP transport serving the echo workflow.
-#   redis    — optional checkpoint / message store backend.
-#   mcp-mock — lightweight HTTP stub acting as a remote MCP server.
+#   bunshin   — bunshin-go HTTP server (:8080)
+#   postgres  — PostgreSQL 16 + pgvector for VectorStore, MessageStore, CheckpointStore
+#   redis     — prompt cache + checkpoint/message store backend
+#   minio     — S3-compatible blob store for large messages and sandbox file I/O
+#   mcp-mock  — lightweight MCP server stub
 #
 # Usage:
 #   docker compose -f deployments/docker-compose.yml up
 #
-# The workflow-server is built from the project Dockerfile (see below).
-# It exposes POST /workflows/echo and GET /workflows/echo/stream on :8080.
+# For local dev without Postgres/MinIO, remove the depends_on entries and
+# set BUNSHIN_STORE=memory to use in-process backends.
 
 services:
   bunshin:
@@ -23,11 +25,19 @@ services:
       BUNSHIN_ADDR: ":8080"
       BUNSHIN_LOG_LEVEL: "info"
       REDIS_URL: "redis:6379"
-      # Inject provider credentials via environment — picked up by EnvProvider.
+      DATABASE_URL: "postgres://bunshin:bunshin@postgres:5432/bunshin?sslmode=disable"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: "bunshin"
+      MINIO_SECRET_KEY: "bunshin-secret"
+      MINIO_BUCKET: "bunshin"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -36,6 +46,23 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: bunshin
+      POSTGRES_USER: bunshin
+      POSTGRES_PASSWORD: bunshin
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bunshin -d bunshin"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -50,6 +77,24 @@ services:
       timeout: 3s
       retries: 5
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: bunshin
+      MINIO_ROOT_PASSWORD: bunshin-secret
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Lightweight MCP server stub — replace with a real MCP server image in production.
   mcp-mock:
     image: kennethreitz/httpbin:latest
@@ -58,4 +103,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   redis-data:
+  minio-data:

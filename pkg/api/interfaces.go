@@ -35,6 +35,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/stlimtat/bunshin-go/pkg/memory"
 	"github.com/stlimtat/bunshin-go/pkg/prompt"
 	"github.com/stlimtat/bunshin-go/pkg/transport"
 	"github.com/stlimtat/bunshin-go/pkg/workflow"
@@ -62,6 +63,10 @@ type RouterConfig struct {
 	// WorkflowTenantID is the tenant used for all workflow CRUD requests.
 	// Defaults to "default" when empty.
 	WorkflowTenantID string
+	// Threads enables GET /v1/threads and GET /v1/threads/{id}/messages.
+	// When nil, thread endpoints return empty lists.
+	// Workflow invoke writes input+output to the thread when thread_id is set.
+	Threads memory.ThreadRegistry
 }
 
 // Router mounts all /v1 routes onto mux.
@@ -72,6 +77,7 @@ type Router struct {
 	refresher        PromptRefresher
 	workflowStore    workflow.Store
 	workflowTenantID string
+	threads          memory.ThreadRegistry
 }
 
 // NewRouter returns a Router backed by handler.
@@ -82,6 +88,7 @@ func NewRouter(handler transport.WorkflowHandler, cfg ...RouterConfig) *Router {
 		ro.promptActivator = c.PromptActivator
 		ro.refresher = c.Refresher
 		ro.workflowStore = c.WorkflowStore
+		ro.threads = c.Threads
 		if c.WorkflowTenantID != "" {
 			ro.workflowTenantID = c.WorkflowTenantID
 		}

@@ -3,10 +3,12 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/stlimtat/bunshin-go/pkg/auth"
+	"github.com/stlimtat/bunshin-go/pkg/llm"
 	"github.com/stlimtat/bunshin-go/pkg/prompt"
 	"github.com/stlimtat/bunshin-go/pkg/workflow"
 )
@@ -25,10 +27,29 @@ func (ro *Router) handleWorkflowInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var input any
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
+	}
+
+	var threadID string
+	if tid, ok := raw["thread_id"]; ok {
+		_ = json.Unmarshal(tid, &threadID)
+	}
+
+	// Use "input" field if present; otherwise treat the whole body as input.
+	var input any
+	if inputRaw, ok := raw["input"]; ok {
+		_ = json.Unmarshal(inputRaw, &input)
+	} else {
+		converted := make(map[string]any, len(raw))
+		for k, v := range raw {
+			var val any
+			_ = json.Unmarshal(v, &val)
+			converted[k] = val
+		}
+		input = converted
 	}
 
 	output, err := runnable.Invoke(r.Context(), input)
@@ -36,8 +57,19 @@ func (ro *Router) handleWorkflowInvoke(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	if ro.threads != nil && threadID != "" {
+		store, serr := ro.threads.GetOrCreate(r.Context(), threadID)
+		if serr == nil {
+			inputText, _ := json.Marshal(input)
+			outputText, _ := json.Marshal(output)
+			_ = store.Append(r.Context(), llm.NewTextMessage(llm.RoleUser, string(inputText)))
+			_ = store.Append(r.Context(), llm.NewTextMessage(llm.RoleAssistant, string(outputText)))
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(output)
+	_ = json.NewEncoder(w).Encode(map[string]any{"thread_id": threadID, "output": output})
 }
 
 func (ro *Router) handleWorkflowStream(w http.ResponseWriter, r *http.Request) {
@@ -236,16 +268,60 @@ func (ro *Router) handleWorkflowDelete(w http.ResponseWriter, r *http.Request) {
 
 // ---- threads ----
 
-// handleListThreads is a stub — requires MessageStore integration.
-func (ro *Router) handleListThreads(w http.ResponseWriter, _ *http.Request) {
+func (ro *Router) handleListThreads(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"threads": []any{}})
+	if ro.threads == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"threads": []any{}})
+		return
+	}
+	ids, err := ro.threads.List(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	threads := make([]map[string]string, 0, len(ids))
+	for _, id := range ids {
+		threads = append(threads, map[string]string{"id": id})
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"threads": threads})
 }
 
-// handleGetThreadMessages is a stub — requires MessageStore integration.
-func (ro *Router) handleGetThreadMessages(w http.ResponseWriter, _ *http.Request) {
+func (ro *Router) handleGetThreadMessages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
+	threadID := r.PathValue("id")
+	if ro.threads == nil || threadID == "" {
+		_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
+		return
+	}
+	store, err := ro.threads.GetOrCreate(r.Context(), threadID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	msgs, err := store.Window(r.Context(), 0)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type apiMsg struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	out := make([]apiMsg, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, apiMsg{Role: string(m.Role), Content: messageText(m)})
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"messages": out})
+}
+
+// messageText extracts plain text from the first text part of a message.
+func messageText(m llm.Message) string {
+	for _, p := range m.Parts {
+		if p.Text != "" {
+			return p.Text
+		}
+	}
+	return fmt.Sprintf("%v", m.Parts)
 }
 
 // ---- prompts ----
