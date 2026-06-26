@@ -171,7 +171,13 @@ func newWorkflowRunCmd() *cobra.Command {
 				}
 			}
 
-			client := newServerClient(viper.GetString("server"))
+			// Prefer the inherited persistent --server flag over viper to avoid
+			// cobra persistent flag → viper propagation issues.
+			serverURL, _ := cmd.Flags().GetString("server")
+			if serverURL == "" {
+				serverURL = viper.GetString("server")
+			}
+			client := newServerClient(serverURL)
 			var result any
 			if err := client.postJSON("/v1/workflows/"+name+"/invoke", inputBody, &result); err != nil {
 				return err
@@ -186,7 +192,6 @@ func newWorkflowRunCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("input", "", "JSON input for the workflow")
-	cmd.Flags().String("server", "http://localhost:8080", "bunshin server address")
 	mustBindFlag(cmd, "workflow_input", "input")
 	return cmd
 }

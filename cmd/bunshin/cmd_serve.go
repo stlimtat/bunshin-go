@@ -6,13 +6,17 @@ import (
 	"net/http"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
 
+	itransport "github.com/stlimtat/bunshin-go/internal/transport"
 	"github.com/stlimtat/bunshin-go/internal/telemetry"
+	"github.com/stlimtat/bunshin-go/pkg/api"
 	"github.com/stlimtat/bunshin-go/pkg/core"
+	"github.com/stlimtat/bunshin-go/pkg/memory"
 	"github.com/stlimtat/bunshin-go/pkg/transport"
 )
 
@@ -23,12 +27,13 @@ func newServeCmd() *cobra.Command {
 		Long: `Start the bunshin-go HTTP workflow server.
 
 Exposes:
-  POST /workflows/{id}        synchronous workflow execution
-  GET  /workflows/{id}/stream SSE streaming execution
-  GET  /health                healthcheck (Docker/LB probe)
-  GET  /live                  liveness probe (Kubernetes)
-  GET  /ready                 readiness probe (Kubernetes)
-  GET  /debug/pprof/*         Go pprof profiling
+  POST /v1/workflows/{name}/invoke  synchronous workflow execution
+  GET  /v1/workflows/{name}/stream  SSE streaming
+  GET  /v1/workflows                list registered workflows
+  GET  /v1/threads                  list conversation threads
+  GET  /health                      healthcheck (Docker/LB probe)
+  GET  /live                        liveness probe (Kubernetes)
+  GET  /ready                       readiness probe (Kubernetes)
 
 Environment variables (BUNSHIN_ prefix):
   BUNSHIN_ADDR        Listen address (default: :8080)
@@ -51,13 +56,23 @@ func runServe(_ *cobra.Command, _ []string) error {
 	handler.Register("echo", core.NewRunnableFunc("echo", func(_ context.Context, input any) (any, error) {
 		return input, nil
 	}))
+	handler.Register("job-search", newJobSearchRunnable())
 
 	addr := cfg.Addr
 	if addr == "" {
 		addr = viper.GetString("addr")
 	}
 
-	srv := transport.NewHTTPTransport(addr).WithLogger(logger)
+	threads := memory.NewMemoryThreadRegistry()
+	router := api.NewRouter(handler, api.RouterConfig{Threads: threads})
+
+	mux := http.NewServeMux()
+	router.Mount(mux)
+	mux.HandleFunc("/health", itransport.HandleHealth)
+	mux.HandleFunc("/live", itransport.HandleLive)
+	mux.HandleFunc("/ready", itransport.HandleReady)
+
+	srv := &http.Server{Addr: addr, Handler: mux}
 	logger.Info().Str("addr", addr).Msg("starting bunshin-go server")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -66,10 +81,17 @@ func runServe(_ *cobra.Command, _ []string) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		if err := srv.Serve(ctx, handler); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 		return nil
+	})
+
+	g.Go(func() error {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutCtx)
 	})
 
 	if err := g.Wait(); err != nil {
