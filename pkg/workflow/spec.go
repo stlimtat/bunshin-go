@@ -1,12 +1,11 @@
 package workflow
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/stlimtat/bunshin-go/internal/hash"
 	"gopkg.in/yaml.v3"
 )
 
@@ -136,7 +135,7 @@ func Parse(data []byte) (*Spec, error) {
 	if err != nil {
 		return nil, fmt.Errorf("workflow: parse: canonicalise: %w", err)
 	}
-	s.Version = contentHash(canonical)
+	s.Version = hash.Bytes(canonical)
 	return &s, nil
 }
 
@@ -154,11 +153,4 @@ func canonicalJSON(s *Spec) ([]byte, error) {
 		Description: s.Description,
 		Nodes:       s.Nodes,
 	})
-}
-
-// contentHash returns "sha256:" + first 32 hex chars of the SHA-256 digest.
-// 32 hex chars = 128 bits, providing strong collision resistance.
-func contentHash(data []byte) string {
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])[:32]
 }

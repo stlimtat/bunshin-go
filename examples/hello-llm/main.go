@@ -31,10 +31,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	registry := llm.NewProviderRegistry()
-	registry.Register("openai-mini", provider, llm.Tag("vendor", string(llm.VendorOpenAI)))
-	_ = registry
-
 	req := &llm.Request{
 		Messages: []llm.Message{
 			llm.NewTextMessage(llm.RoleUser, "Say hello in three words."),

@@ -3,12 +3,16 @@ package memory
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 	"github.com/stlimtat/bunshin-go/pkg/llm"
 )
+
+var globalSeq atomic.Int64
 
 // PostgresHybridMessageStore stores text messages inline in Postgres and routes
 // media-bearing messages to MinIO.
@@ -68,7 +72,7 @@ func (s *PostgresHybridMessageStore) Append(ctx context.Context, msg llm.Message
 		if err != nil {
 			return err
 		}
-		key := fmt.Sprintf("%s/%s/media/%d.json", s.tenantID, s.threadID, minioKey())
+		key := fmt.Sprintf("%s/%s/media/%d.json", s.tenantID, s.threadID, globalSeq.Add(1))
 		if _, err = s.minioClient.PutObject(ctx, s.minioBucket, key,
 			bytes.NewReader(data), int64(len(data)),
 			minio.PutObjectOptions{ContentType: "application/json"}); err != nil {
@@ -105,7 +109,7 @@ func (s *PostgresHybridMessageStore) Window(ctx context.Context, maxTokens int) 
 		}
 		// Detect MinIO pointer rows.
 		var sentinel struct{ MinioKey string `json:"minio_key"` }
-		if err := unmarshalSentinel(data, &sentinel); err == nil && sentinel.MinioKey != "" {
+		if err := json.Unmarshal(data, &sentinel); err == nil && sentinel.MinioKey != "" {
 			data, err = s.fetchMinIO(ctx, sentinel.MinioKey)
 			if err != nil {
 				return nil, err
