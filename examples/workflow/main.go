@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	go run ./examples/hello-workflow
+//	go run ./examples/workflow
 package main
 
 import (

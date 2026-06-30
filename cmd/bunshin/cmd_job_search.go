@@ -11,7 +11,7 @@ import (
 )
 
 // jobSearchState is the typed state for the job-search workflow.
-// ponytail: duplicated from examples/hello-job-search; both are demos with different entry points
+// ponytail: duplicated from examples/job-search; both are demos with different entry points
 type jobSearchState struct {
 	Query     string            `json:"query"`
 	Jobs      []jobListing      `json:"jobs"`

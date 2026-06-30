@@ -15,7 +15,7 @@
 //
 // Usage:
 //
-//	go run ./examples/hello-job-search
+//	go run ./examples/job-search
 package main
 
 import (

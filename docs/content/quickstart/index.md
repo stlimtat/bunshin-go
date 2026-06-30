@@ -24,7 +24,7 @@ cd bunshin-go
 
 ## The code
 
-`examples/hello-llm/main.go`:
+`examples/llm/main.go`:
 
 ```go
 package main
@@ -73,7 +73,7 @@ func main() {
 ## Run
 
 ```bash
-OPENAI_API_KEY=sk-... go run ./examples/hello-llm
+OPENAI_API_KEY=sk-... go run ./examples/llm
 ```
 
 ```

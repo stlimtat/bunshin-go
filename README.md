@@ -26,7 +26,7 @@ A Go port of LangChain / LangGraph / LangSmith — production-grade LLM pipeline
 ```bash
 git clone https://github.com/stlimtat/bunshin-go
 cd bunshin-go
-OPENAI_API_KEY=sk-... go run ./examples/hello-llm
+OPENAI_API_KEY=sk-... go run ./examples/llm
 # Response: Hello, world! 🌍
 ```
 

@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	go run ./examples/hello-mcp-sandbox
+//	go run ./examples/mcp-sandbox
 package main
 
 import (

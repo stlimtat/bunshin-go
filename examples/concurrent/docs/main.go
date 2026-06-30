@@ -1,10 +1,10 @@
 // concurrent/docs summarises five documents in parallel using one goroutine
-// per document and a single OpenAI provider. Shows throughput scaling —
-// total time is bounded by the slowest request, not the sum of all five.
+// per document. Total time is bounded by the slowest request, not the sum.
 //
 // Usage:
 //
-//	OPENAI_API_KEY=sk-... go run ./examples/concurrent/docs
+//	OPENAI_API_KEY=sk-...  go run ./examples/concurrent/docs
+//	GOOGLE_API_KEY=AIza... go run ./examples/concurrent/docs
 package main
 
 import (
@@ -27,17 +27,7 @@ var documents = []string{
 }
 
 func main() {
-	key := os.Getenv("OPENAI_API_KEY")
-	if key == "" {
-		fmt.Fprintln(os.Stderr, "OPENAI_API_KEY not set")
-		os.Exit(1)
-	}
-
-	provider, err := llm.NewOpenAIProvider(llm.OpenAIConfig{
-		APIKey:    key,
-		Model:     "gpt-4o-mini",
-		MaxTokens: 64,
-	})
+	provider, err := providerFromEnv()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "provider: %v\n", err)
 		os.Exit(1)
@@ -77,4 +67,16 @@ func main() {
 	fmt.Printf("\n%d docs in %s (sequential would be ~%s)\n",
 		len(documents), elapsed.Round(time.Millisecond),
 		(elapsed * time.Duration(len(documents))).Round(time.Millisecond))
+}
+
+func providerFromEnv() (llm.LLMProvider, error) {
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		return llm.NewOpenAIProvider(llm.OpenAIConfig{APIKey: key, Model: "gpt-4o-mini", MaxTokens: 64})
+	}
+	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
+		return llm.NewGoogleProvider(llm.GoogleConfig{APIKey: key, Model: "gemini-2.0-flash", MaxTokens: 64})
+	}
+	fmt.Fprintln(os.Stderr, "set OPENAI_API_KEY or GOOGLE_API_KEY")
+	os.Exit(1)
+	return nil, nil
 }

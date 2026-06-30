@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	go run ./examples/hello-agent
+//	go run ./examples/agent
 package main
 
 import (

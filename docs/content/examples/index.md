@@ -87,7 +87,7 @@ advisor agents, generates a tailored resume and cover letter per match, and subm
 applications automatically.
 
 ```bash
-go run ./examples/hello-job-search
+go run ./examples/job-search
 ```
 
 **Pipeline:**
