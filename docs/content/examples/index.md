@@ -12,6 +12,74 @@ Working examples showing how to use bunshin-go features. Each example is self-co
 
 ---
 
+## Concurrency
+
+bunshin-go runs LLM calls and tool invocations in goroutines — no GIL, no thread pool. These examples prove it with wall-clock times.
+
+### Parallel providers
+
+Call OpenAI and Anthropic simultaneously. Total time ≈ slowest provider, not the sum.
+
+```bash
+OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... go run ./examples/concurrent/providers
+```
+
+```
+OpenAI   (gpt-4o-mini):          Go's goroutines enable true concurrency without a GIL.
+Anthropic (claude-haiku): Go's native goroutines allow concurrent execution without Python's GIL limitations.
+Wall-clock time: 612ms (sequential would be ~2×)
+```
+
+### Parallel models
+
+Same OpenAI key, two model tiers at once. Fan out fast + smart in one `errgroup`.
+
+```bash
+OPENAI_API_KEY=sk-... go run ./examples/concurrent/models
+```
+
+```
+gpt-4o-mini: Go's goroutines allow true parallelism without Python's GIL.
+gpt-4o:      Go achieves true concurrency through goroutines, bypassing the GIL that limits Python threads.
+Wall-clock time: 820ms (sequential would be ~2×)
+```
+
+### Parallel document summarisation
+
+Five documents, five goroutines, one provider. Total time bounded by the slowest request.
+
+```bash
+OPENAI_API_KEY=sk-... go run ./examples/concurrent/docs
+```
+
+```
+[1] Go is a statically typed, compiled language from Google built for simplicity and concurrency.
+[2] Goroutines are lightweight threads that enable massive concurrency with minimal memory.
+[3] Go's standard library covers HTTP, JSON, crypto, and I/O out of the box.
+[4] Go modules provide reproducible builds via a go.mod dependency manifest.
+[5] Go interfaces are satisfied implicitly by any type implementing the required methods.
+
+5 docs in 743ms (sequential would be ~3715ms)
+```
+
+### Parallel tool calls
+
+Three tools fired concurrently from a single dispatcher — no LLM required.
+
+```bash
+go run ./examples/concurrent/tools
+```
+
+```
+upper("hello bunshin")   → HELLO BUNSHIN
+reverse("hello bunshin") → nihsnub olleh
+shout("hello bunshin")   → hello bunshin!!!
+
+All tools in 82ms (slowest was 80ms; sequential would be 190ms)
+```
+
+---
+
 ## Job search workflow
 
 A complete multi-agent pipeline that searches job boards, scores each listing with three
