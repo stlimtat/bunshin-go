@@ -133,7 +133,7 @@ func TestWithBearerJWTHTTP_Missing(t *testing.T) {
 }
 
 func TestWithAPIKey_RejectsNoPrincipal(t *testing.T) {
-	guarded := middleware.Chain(echoRunnable, middleware.WithAPIKey("sk-test"))
+	guarded := middleware.Chain(echoRunnable, middleware.WithAPIKey())
 	_, err := guarded.Invoke(context.Background(), "input")
 	if !errors.Is(err, middleware.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized when no principal, got %v", err)
@@ -141,7 +141,7 @@ func TestWithAPIKey_RejectsNoPrincipal(t *testing.T) {
 }
 
 func TestWithAPIKey_AllowsWithPrincipal(t *testing.T) {
-	guarded := middleware.Chain(echoRunnable, middleware.WithAPIKey("sk-test"))
+	guarded := middleware.Chain(echoRunnable, middleware.WithAPIKey())
 	ctx := auth.WithContext(context.Background(), auth.Principal{Subject: "user", TenantID: "t1"})
 	out, err := guarded.Invoke(ctx, "ping")
 	if err != nil {

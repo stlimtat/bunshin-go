@@ -17,25 +17,6 @@ import (
 // Exceeded depth returns an error to the calling LLM, not a panic.
 const maxAgentDepth = 8
 
-// CompileRegistries holds the registries needed to compile an agent.
-type CompileRegistries struct {
-	// Tools resolves tool names against the registered tool set.
-	Tools *tools.ToolRegistry
-
-	// Agents resolves agent names (subagent delegation).
-	// Typically implements memoization to avoid recompiling the same agent.
-	Agents AgentResolver
-
-	// Skills resolves skill names.
-	Skills SkillResolver
-
-	// Prompts loads Fragment specs by slug.
-	Prompts prompt.PromptBackend
-
-	// LLM resolves model tier and tags to a provider.
-	LLM *llm.ProviderRegistry
-}
-
 // Compile builds a CompiledAgent from an AgentSpec.
 //
 // Compilation is eager and topological: all references (tools, agents, skills,
@@ -611,7 +592,9 @@ func createContentBasedRouter(maxIterations int) graph.Router[AgentState] {
 
 		// Truncate on cap: return last content rather than erroring.
 		if step >= maxIterations {
-			state.Meta["bunshin.agent_truncated"] = true
+			if state.Meta != nil {
+				state.Meta["bunshin.agent_truncated"] = true
+			}
 			return graph.END, nil
 		}
 

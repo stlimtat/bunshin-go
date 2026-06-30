@@ -16,9 +16,12 @@ var ErrUnauthorized = errors.New("unauthorized")
 // ErrForbidden is returned by WithRBAC when the caller fails the role predicate.
 var ErrForbidden = errors.New("forbidden")
 
-// WithAPIKey authenticates callers by matching the X-API-Key header against key.
-// On success, writes a Principal with Subject=key fingerprint (first 8 chars) to context.
-func WithAPIKey(key string) Middleware {
+// WithAPIKey gates a Runnable behind a pre-injected Principal check.
+// A Principal must be injected into the context before invoking the chain —
+// use WithAPIKeyHTTP (or a similar HTTP adapter) to extract the X-API-Key header
+// and call auth.WithContext before dispatching to the Runnable chain.
+// Returns ErrUnauthorized when no Principal is present.
+func WithAPIKey() Middleware {
 	return func(next core.Runnable) core.Runnable {
 		return core.NewRunnableFuncWithStream(
 			next.Name(),
