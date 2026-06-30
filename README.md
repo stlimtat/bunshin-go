@@ -81,11 +81,11 @@ BUNSHIN_PROVIDER=openai BUNSHIN_API_KEY=sk-... bunshin llm --message "Hello"
 ```bash
 docker compose -f deployments/docker-compose.yml up
 
-curl -X POST http://localhost:8080/workflows/echo \
+curl -X POST http://localhost:8080/v1/workflows/echo/invoke \
   -H "Content-Type: application/json" \
   -d '{"input": {"message": "hello"}}'
 
-curl -N "http://localhost:8080/workflows/echo/stream?input=%7B%22message%22%3A%22hello%22%7D"
+curl -N "http://localhost:8080/v1/workflows/echo/stream?input=%7B%22message%22%3A%22hello%22%7D"
 ```
 
 ---
