@@ -21,19 +21,16 @@ A Go port of LangChain / LangGraph / LangSmith — production-grade LLM pipeline
 
 ---
 
-## Install
+## Quickstart
 
 ```bash
-go get github.com/stlimtat/bunshin-go
+git clone https://github.com/stlimtat/bunshin-go
+cd bunshin-go
+OPENAI_API_KEY=sk-... go run ./examples/hello-llm
+# Response: Hello, world! 🌍
 ```
 
-```go
-provider := llm.NewFakeProvider("openai", "Hello from bunshin-go!")
-result, _ := provider.Complete(ctx, &llm.Request{
-    Messages: []llm.Message{llm.NewTextMessage(llm.RoleUser, "What is Go?")},
-})
-fmt.Println(result.Content)
-```
+Full walkthrough: [stlimtat.github.io/bunshin-go/quickstart/](https://stlimtat.github.io/bunshin-go/quickstart/)
 
 ---
 
