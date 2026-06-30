@@ -98,7 +98,9 @@ func WithTokenBudget(tracker *TokenBudgetTracker, extractor func(any) int64) Mid
 			ctx = context.WithValue(ctx, budgetKey{}, tracker)
 			out, err := next.Invoke(ctx, input)
 			if err == nil && extractor != nil {
-				_ = tracker.Consume(extractor(out))
+				if cerr := tracker.Consume(extractor(out)); cerr != nil {
+					return out, cerr
+				}
 			}
 			return out, err
 		}

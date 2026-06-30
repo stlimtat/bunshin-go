@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -85,8 +86,9 @@ func (ro *Router) handleWorkflowStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input any
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		input = nil
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
 	}
 
 	ch, err := runnable.Stream(r.Context(), input)

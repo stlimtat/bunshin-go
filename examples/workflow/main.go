@@ -1,4 +1,4 @@
-// hello-workflow demonstrates a two-node sequential workflow using pkg/graph.
+// workflow demonstrates a two-node sequential workflow using pkg/graph.
 // Node A uppercases the input; Node B appends an exclamation mark.
 // The graph composes them into a typed State[string] workflow.
 //
@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	g := graph.New[string]("hello-workflow").
+	g := graph.New[string]("workflow").
 		AddNode(graph.Node[string]{
 			ID: "upper",
 			Runnable: core.TypedFunc(func(_ context.Context, s core.State[string]) (core.State[string], error) {

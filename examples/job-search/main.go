@@ -1,4 +1,4 @@
-// hello-job-search demonstrates a multi-agent job search workflow using pkg/graph.
+// job-search demonstrates a multi-agent job search workflow using pkg/graph.
 //
 // Pipeline:
 //

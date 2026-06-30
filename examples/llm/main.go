@@ -1,4 +1,4 @@
-// hello-llm demonstrates how to create a typed LLM provider, send a message,
+// llm demonstrates how to create a typed LLM provider, send a message,
 // and read back the response using the bunshin-go pkg/llm package.
 //
 // Usage:

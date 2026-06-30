@@ -1,4 +1,4 @@
-// hello-agent demonstrates an agent loop using pkg/graph.
+// agent demonstrates an agent loop using pkg/graph.
 // The agent loop increments a counter at each step and routes back to itself
 // until the counter reaches 5, then terminates.
 //
@@ -24,7 +24,7 @@ type agentState struct {
 }
 
 func main() {
-	g := graph.New[agentState]("hello-agent").
+	g := graph.New[agentState]("agent").
 		AddNode(graph.Node[agentState]{
 			ID: "step",
 			Runnable: core.TypedFunc(func(_ context.Context, s core.State[agentState]) (core.State[agentState], error) {

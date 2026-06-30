@@ -1,4 +1,4 @@
-// hello-mcp-sandbox demonstrates how to register a mock sandbox via SandboxRegistry
+// mcp-sandbox demonstrates how to register a mock sandbox via SandboxRegistry
 // and invoke it through a CodeExecTool, as an MCP-compatible tool that LLMs can call.
 //
 // In production replace MockSandbox with a real E2B or Docker sandbox.
