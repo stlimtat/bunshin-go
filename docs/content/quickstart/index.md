@@ -82,7 +82,7 @@ bunshin serve --addr :8080
 Then call a workflow:
 
 ```bash
-curl -X POST http://localhost:8080/workflows/echo \
+curl -X POST http://localhost:8080/v1/workflows/echo/invoke \
   -H "Content-Type: application/json" \
   -d '"hello world"'
 ```
@@ -90,7 +90,7 @@ curl -X POST http://localhost:8080/workflows/echo \
 Or stream tokens via SSE:
 
 ```bash
-curl http://localhost:8080/workflows/echo/stream
+curl http://localhost:8080/v1/workflows/echo/stream
 ```
 
 ## Two-step chain

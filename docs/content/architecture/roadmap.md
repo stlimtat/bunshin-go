@@ -103,7 +103,7 @@ Visual graph editor and live trace viewer.
 
 **Graph view**: Render the bunshin graph as a node-edge diagram. Nodes are colour-coded by type (LLM, Tool, Router). Edges show routing conditions.
 
-**Trace view**: Watch a workflow run in real-time. SSE stream from `GET /workflows/{id}/stream` drives the UI — nodes light up as they execute, token-by-token output appears in the LLM node panel.
+**Trace view**: Watch a workflow run in real-time. SSE stream from `GET /v1/workflows/{id}/stream` drives the UI — nodes light up as they execute, token-by-token output appears in the LLM node panel.
 
 **Troubleshooting**: Click any node in a past run to see its input `State[S]`, output `State[S]`, error (if any), token usage, and latency.
 
