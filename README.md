@@ -17,7 +17,7 @@ A Go port of LangChain / LangGraph / LangSmith — production-grade LLM pipeline
 | Latency | 50–200 ms startup | Sub-1 ms startup |
 | Context windows | 2M tokens = 2 GB RAM | Reference/cursor, O(1) RAM |
 
-**Docs:** [architecture](docs/content/architecture/index.md) · [quickstart](docs/content/quickstart/index.md) · [concepts](docs/content/concepts/index.md) · [how-tos](docs/content/howto/)
+**Docs:** [quickstart](https://stlimtat.github.io/bunshin-go/quickstart/) · [concepts](https://stlimtat.github.io/bunshin-go/concepts/) · [how-tos](https://stlimtat.github.io/bunshin-go/howto/) · [architecture](https://stlimtat.github.io/bunshin-go/architecture/)
 
 ---
 
