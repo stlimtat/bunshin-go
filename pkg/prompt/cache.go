@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -198,15 +199,8 @@ func (c *PromptCache) doRefresh() {
 
 // extractTenantID extracts tenantID from a Redis key of the form "{tenantID}:prompt:{slug}".
 func extractTenantID(key string) string {
-	const marker = ":prompt:"
-	idx := len(key)
-	for i := 0; i < len(key)-len(marker); i++ {
-		if key[i:i+len(marker)] == marker {
-			idx = i
-			break
-		}
-	}
-	if idx == len(key) {
+	idx := strings.Index(key, ":prompt:")
+	if idx < 0 {
 		return ""
 	}
 	return key[:idx]

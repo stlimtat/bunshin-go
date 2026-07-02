@@ -87,12 +87,11 @@ func (r *ProviderRegistry) Select(filters ...Tags) []LLMProvider {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var result []LLMProvider
-	for id, entry := range r.entries {
+	for _, entry := range r.entries {
 		if !r.available[entry.provider.ID()] {
 			continue
 		}
 		if tagsMatch(entry.tags, filters) {
-			_ = id
 			result = append(result, entry.provider)
 		}
 	}

@@ -128,6 +128,38 @@ node for an agent compiled via `agent.Compile` when you need tool use or multi-t
 
 ---
 
+## Loop engineering (job search, improved)
+
+`examples/job-search-loop` upgrades the straight-line job-search pipeline with two engineered loops, using nothing but cyclic `graph.Router` edges and loop counters in typed state:
+
+1. **Query-refinement loop** — if search returns too few listings, a refine node broadens the query and searches again (bounded by `maxSearchAttempts`).
+2. **Evaluator-optimizer loop** — a critic node scores every generated document; documents below the quality threshold are revised and re-scored (bounded by `maxRevisions`).
+
+```bash
+go run ./examples/job-search-loop
+```
+
+```
+Loop trace:
+  search #1: query="principal Go engineer, quantum blockchain, Antarctica" → 1 result(s)
+  refine: broadened query to "principal Go engineer, quantum blockchain"
+  search #2: query="principal Go engineer, quantum blockchain" → 2 result(s)
+  refine: broadened query to "principal Go engineer"
+  search #3: query="principal Go engineer" → 3 result(s)
+  analyze: 3 listing(s) pass fit filter
+  generate: 3 first draft(s)
+  critique: scores=j1=70 j2=70 j3=70 (threshold 85)
+  revise #1: rewrote 3 doc(s) below threshold
+  critique: scores=j1=78 j2=78 j3=78 (threshold 85)
+  revise #2: rewrote 3 doc(s) below threshold
+  critique: scores=j1=86 j2=86 j3=86 (threshold 85)
+  submit: 3 application(s) sent
+```
+
+The key idea: **quality is a loop invariant, not a hope**. Every back edge has a counter bound, so termination is guaranteed; every forward edge has a measurable gate, so output quality is guaranteed. Swap the stub critic for an LLM scoring call and the pattern holds unchanged.
+
+---
+
 ## CLI examples
 
 The `bunshin` CLI ships several built-in demo commands.
