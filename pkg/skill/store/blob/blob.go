@@ -14,22 +14,23 @@ package blob
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 
 	"github.com/stlimtat/bunshin-go/pkg/skill"
-	"gocloud.dev/blob"
+	goblob "gocloud.dev/blob"
 )
 
 // Store is a blob.Bucket-backed implementation of skill.Store.
 type Store struct {
-	bucket *blob.Bucket
+	bucket *goblob.Bucket
 }
 
 // New returns a Store backed by bucket.
-func New(bucket *blob.Bucket) *Store {
+func New(bucket *goblob.Bucket) *Store {
 	return &Store{bucket: bucket}
 }
 
@@ -91,11 +92,11 @@ func (s *Store) GetVersion(ctx context.Context, tenantID, name, version string) 
 // Note: this requires listing all objects, so it may be slow for large buckets.
 func (s *Store) List(ctx context.Context, tenantID string) ([]string, error) {
 	prefix := tenantID + "/"
-	iter := s.bucket.List(&blob.ListOptions{Prefix: prefix})
+	iter := s.bucket.List(&goblob.ListOptions{Prefix: prefix})
 	skillNames := make(map[string]struct{})
 	for {
 		attrs, err := iter.Next(ctx)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -119,11 +120,11 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]string, error) {
 // Note: Cloud blob storage doesn't preserve insertion order, so versions are sorted alphabetically.
 func (s *Store) ListVersions(ctx context.Context, tenantID, name string) ([]string, error) {
 	prefix := tenantID + "/" + name + "/"
-	iter := s.bucket.List(&blob.ListOptions{Prefix: prefix})
+	iter := s.bucket.List(&goblob.ListOptions{Prefix: prefix})
 	versions := make([]string, 0)
 	for {
 		attrs, err := iter.Next(ctx)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

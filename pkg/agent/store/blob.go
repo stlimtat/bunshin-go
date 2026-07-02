@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -53,9 +54,9 @@ func (s *BlobStore) Create(ctx context.Context, tenantID string, spec *agent.Age
 	if err != nil {
 		return "", fmt.Errorf("blob.Store: open writer %q: %w", key, err)
 	}
-	defer w.Close()
 
 	if _, err := w.Write(data); err != nil {
+		_ = w.Close()
 		return "", fmt.Errorf("blob.Store: write %q: %w", key, err)
 	}
 	if err := w.Close(); err != nil {
@@ -101,7 +102,7 @@ func (s *BlobStore) List(ctx context.Context, tenantID string) ([]string, error)
 	for {
 		attrs, err := iter.Next(ctx)
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return nil, fmt.Errorf("blob.Store: list: %w", err)
@@ -126,13 +127,20 @@ func (s *BlobStore) List(ctx context.Context, tenantID string) ([]string, error)
 // ListVersions returns all version metadata for name.
 func (s *BlobStore) ListVersions(ctx context.Context, tenantID, name string) ([]AgentVersion, error) {
 	prefix := fmt.Sprintf("%s/%s/", tenantID, name)
-	iter := s.bucket.List(&blob.ListOptions{Prefix: prefix})
 
+	// Read active pointer once — avoids an O(n) ReadAll inside the listing loop.
+	activeKey := fmt.Sprintf("%s/%s/active.txt", tenantID, name)
+	activeVersion := ""
+	if data, err := s.bucket.ReadAll(ctx, activeKey); err == nil {
+		activeVersion = strings.TrimSpace(string(data))
+	}
+
+	iter := s.bucket.List(&blob.ListOptions{Prefix: prefix})
 	var versions []AgentVersion
 	for {
 		attrs, err := iter.Next(ctx)
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return nil, fmt.Errorf("blob.Store: list versions: %w", err)
@@ -148,10 +156,7 @@ func (s *BlobStore) ListVersions(ctx context.Context, tenantID, name string) ([]
 		version := strings.TrimSuffix(fileName, ".yaml")
 
 		status := "draft"
-		// Check if this version is active
-		activeKey := fmt.Sprintf("%s/%s/active.txt", tenantID, name)
-		activeData, err := s.bucket.ReadAll(ctx, activeKey)
-		if err == nil && strings.TrimSpace(string(activeData)) == version {
+		if version == activeVersion {
 			status = "active"
 		}
 
@@ -189,9 +194,9 @@ func (s *BlobStore) Activate(ctx context.Context, tenantID, name, version string
 	if err != nil {
 		return fmt.Errorf("blob.Store: open writer %q: %w", activeKey, err)
 	}
-	defer w.Close()
 
 	if _, err := w.Write([]byte(version)); err != nil {
+		_ = w.Close()
 		return fmt.Errorf("blob.Store: write %q: %w", activeKey, err)
 	}
 	if err := w.Close(); err != nil {
@@ -211,7 +216,7 @@ func (s *BlobStore) Delete(ctx context.Context, tenantID, name string) error {
 	for {
 		attrs, err := iter.Next(ctx)
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return fmt.Errorf("blob.Store: list for delete: %w", err)

@@ -489,15 +489,6 @@ func (ro *Router) getVersion(w http.ResponseWriter, r *http.Request, tenantID, s
 	_ = json.NewEncoder(w).Encode(f)
 }
 
-func (ro *Router) handlePromptGetBySlug(w http.ResponseWriter, r *http.Request) {
-	if ro.promptBackend == nil {
-		http.Error(w, "prompt backend not configured", http.StatusNotImplemented)
-		return
-	}
-	slug := r.PathValue("slug")
-	ro.getBySlug(w, r, ro.tenantID(r), slug)
-}
-
 func (ro *Router) handlePromptActivate(w http.ResponseWriter, r *http.Request) {
 	if ro.promptActivator == nil {
 		http.Error(w, "prompt activator not configured", http.StatusNotImplemented)

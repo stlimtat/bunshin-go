@@ -157,10 +157,6 @@ func (s *MemoryStore) Activate(ctx context.Context, tenantID, name, version stri
 	if _, ok := e.versions[version]; !ok {
 		return fmt.Errorf("agent %q version %q tenant %q: not found", name, version, tenantID)
 	}
-	// Mark the previously active version back to draft.
-	if e.active != "" && e.active != version {
-		// (no explicit Status field to update in memory)
-	}
 	e.active = version
 	return nil
 }

@@ -35,7 +35,6 @@ import (
 	"io"
 	"strings"
 
-	"gocloud.dev/blob"
 	goblob "gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 
@@ -51,7 +50,7 @@ type Store struct {
 
 // New returns a Store backed by bucket under the given key prefix.
 // prefix must end with "/" or be empty.
-func New(bucket *blob.Bucket, prefix string) *Store {
+func New(bucket *goblob.Bucket, prefix string) *Store {
 	return &Store{bucket: bucket, prefix: prefix}
 }
 

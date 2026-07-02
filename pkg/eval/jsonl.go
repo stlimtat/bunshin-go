@@ -52,8 +52,6 @@ func (b *JSONLDatasetBackend) Push(_ context.Context, ds *Dataset) error {
 	if err != nil {
 		return fmt.Errorf("jsonl backend: create %q: %w", ds.Name, err)
 	}
-	defer f.Close()
-
 	enc := json.NewEncoder(f)
 	for _, ex := range ds.Examples {
 		row := jsonlRow{
@@ -64,8 +62,12 @@ func (b *JSONLDatasetBackend) Push(_ context.Context, ds *Dataset) error {
 			Metadata:  ex.Metadata,
 		}
 		if err := enc.Encode(row); err != nil {
+			_ = f.Close()
 			return fmt.Errorf("jsonl backend: encode: %w", err)
 		}
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("jsonl backend: close %q: %w", ds.Name, err)
 	}
 	return nil
 }
@@ -79,7 +81,7 @@ func (b *JSONLDatasetBackend) Pull(_ context.Context, name string) (*Dataset, er
 		}
 		return nil, fmt.Errorf("jsonl backend: open %q: %w", name, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ds := &Dataset{ID: uuid.New(), Name: name}
 	scanner := bufio.NewScanner(f)
@@ -116,8 +118,14 @@ func (b *JSONLDatasetBackend) PushResults(_ context.Context, report *EvalReport)
 	if err != nil {
 		return fmt.Errorf("jsonl backend: open results %q: %w", path, err)
 	}
-	defer f.Close()
-	return json.NewEncoder(f).Encode(report)
+	if err := json.NewEncoder(f).Encode(report); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("jsonl backend: encode results: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("jsonl backend: close results %q: %w", path, err)
+	}
+	return nil
 }
 
 // ListDatasets lists all .jsonl files in dir as dataset names (without extension).

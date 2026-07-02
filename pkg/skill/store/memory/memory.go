@@ -143,10 +143,8 @@ func (s *Store) Activate(_ context.Context, tenantID, name, version string) erro
 		return fmt.Errorf("skill %q version %q: %w", name, version, skill.ErrVersionConflict)
 	}
 	// Mark the previously active version back to draft.
-	if e.active != "" && e.active != version {
-		if prev, ok := e.versions[e.active]; ok {
-			prev.Status = skill.StatusDraft
-		}
+	if prev, ok := e.versions[e.active]; ok && e.active != version {
+		prev.Status = skill.StatusDraft
 	}
 	e.versions[version].Status = skill.StatusActive
 	e.active = version

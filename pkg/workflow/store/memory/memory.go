@@ -143,10 +143,8 @@ func (s *Store) Activate(_ context.Context, tenantID, name, version string) erro
 		return fmt.Errorf("workflow %q version %q: %w", name, version, workflow.ErrVersionConflict)
 	}
 	// Mark the previously active version back to draft.
-	if e.active != "" && e.active != version {
-		if prev, ok := e.versions[e.active]; ok {
-			prev.Status = workflow.StatusDraft
-		}
+	if prev, ok := e.versions[e.active]; ok && e.active != version {
+		prev.Status = workflow.StatusDraft
 	}
 	e.versions[version].Status = workflow.StatusActive
 	e.active = version

@@ -36,7 +36,7 @@ func (m *MockSandbox) Run(ctx context.Context, req RunRequest) (RunResult, error
 	if err != nil {
 		return RunResult{}, err
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	return s.Run(ctx, req)
 }
 
